@@ -1,0 +1,37 @@
+definitions:
+  main.LoginDto:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  main.LoginSuccessDto:
+    properties:
+      accessToken:
+        type: string
+      expiresAt:
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /login:
+    post:
+      parameters:
+      - description: Authentication payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.LoginDto'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/main.LoginSuccessDto'
+      summary: Authenticate
+swagger: "2.0"
