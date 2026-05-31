@@ -9,6 +9,19 @@ definitions:
     - password
     - username
     type: object
+  main.LogupDto:
+    properties:
+      name:
+        type: string
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - name
+    - password
+    - username
+    type: object
   main.ProfileResultDto:
     properties:
       id:
@@ -37,6 +50,17 @@ paths:
         "204":
           description: No Content
       summary: Commit unalive
+  /logup:
+    post:
+      parameters:
+      - description: Account data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.LogupDto'
+      responses: {}
+      summary: Create account
   /me:
     get:
       responses:

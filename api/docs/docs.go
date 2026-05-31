@@ -43,6 +43,23 @@ const docTemplate = `{
                 }
             }
         },
+        "/logup": {
+            "post": {
+                "summary": "Create account",
+                "parameters": [
+                    {
+                        "description": "Account data",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.LogupDto"
+                        }
+                    }
+                ],
+                "responses": {}
+            }
+        },
         "/me": {
             "get": {
                 "summary": "See current user",
@@ -65,6 +82,25 @@ const docTemplate = `{
                 "username"
             ],
             "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.LogupDto": {
+            "type": "object",
+            "required": [
+                "name",
+                "password",
+                "username"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
                 "password": {
                     "type": "string"
                 },

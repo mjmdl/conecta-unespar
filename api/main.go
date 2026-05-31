@@ -33,6 +33,7 @@ func main() {
 	defer connectionPool.Close()
 
 	validate := validator.New()
+	validate.RegisterValidation("accountName", validateAccountName)
 	validate.RegisterValidation("username", validateUsername)
 	validate.RegisterValidation("password", validatePassword)
 	
@@ -59,6 +60,11 @@ type application struct {
 	Validate    *validator.Validate
 }
 
+func validateAccountName(field validator.FieldLevel) bool {
+	length := len(field.Field().String())
+	return 3 <= length && length <= 100
+}
+
 func validateUsername(field validator.FieldLevel) bool {
 	length := len(field.Field().String())
 	return 3 <= length && length <= 100
@@ -74,13 +80,24 @@ func (app *application) setupRoutes(router chi.Router) {
 		if app.Environment.IsDevelopment {
 			router.Get("/swagger/*", swagger.WrapHandler)
 		}
+		router.Post("/logup", app.PostLogup)
 		router.Post("/login", app.PostLogin)
 		router.Group(func(router chi.Router) {
 			router.Use(app.AuthMiddleware)
-			router.Get("/me", app.GetMe)
 			router.Post("/logout", app.PostLogout)
+			router.Get("/me", app.GetMe)
 		})
 	})
+}
+
+func (app *application) ParseAndValidateRequestBody(request *http.Request, into any) error {
+	if err := json.NewDecoder(request.Body).Decode(into); err != nil {
+		return err
+	}
+	if err := app.Validate.Struct(into); err != nil {
+		return err
+	}
+	return nil
 }
 
 /*
@@ -136,6 +153,10 @@ func respondJson(writer http.ResponseWriter, status int, data any) error {
 
 func respondBadRequest(writer http.ResponseWriter, err error) {
 	http.Error(writer, "bad request: " + err.Error(), http.StatusBadRequest)
+}
+
+func respondConflict(writer http.ResponseWriter, message string) {
+	http.Error(writer, "conflict: " + message, http.StatusConflict)
 }
 
 func respondUnauthorized(writer http.ResponseWriter) {
@@ -212,6 +233,70 @@ func (app *application) AuthMiddleware(next http.Handler) http.Handler {
  * Endpoints
  */
 
+type LogupDto struct {
+	Name     string `json:"name" validate:"required,accountName"`
+	Username string `json:"username" validate:"required,username"`
+	Password string `json:"password" validate:"required,password"`
+}
+
+// @Summary Create account
+// @Param body body LogupDto true "Account data"
+// @Router /logup [post]
+func (app *application) PostLogup(writer http.ResponseWriter, request *http.Request) {
+	var logup LogupDto
+	if err := app.ParseAndValidateRequestBody(request, &logup); err != nil {
+		respondBadRequest(writer, err)
+		return
+	}
+
+	transaction, err := app.Database.Begin(request.Context())
+	if err != nil {
+		respondInternalServerError(writer, err, "failed to begin a transaction")
+		return;
+	}
+	defer transaction.Rollback(request.Context())
+
+	const sqlCheckUsernameAvailability = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM cu.account
+			WHERE
+				account.username ILIKE $1::TEXT
+				AND account.valid_to IS NULL
+		);
+	`
+	var usernameIsTaken bool
+	if err := transaction.
+		QueryRow(request.Context(), sqlCheckUsernameAvailability, logup.Username).
+		Scan(&usernameIsTaken); err != nil {
+
+		respondQueryFailed(writer, err, sqlCheckUsernameAvailability)
+		return
+	}
+	if usernameIsTaken {
+		respondConflict(writer, "The username is already used.")
+		return
+	}
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(logup.Password), bcrypt.DefaultCost)
+	if err != nil {
+		respondInternalServerError(writer, err, "failed to hash password")
+		return
+	}
+
+	const sqlInsertAccount = `
+		INSERT INTO cu.account (name, username, password)
+		VALUES ($1::TEXT, LOWER($2::TEXT), $3::TEXT);
+	`
+	if _, err := transaction.Exec(request.Context(), sqlInsertAccount, logup.Name, logup.Username, passwordHash); err != nil {
+		respondQueryFailed(writer, err, sqlInsertAccount)
+		return
+	}
+
+	transaction.Commit(request.Context())
+	writer.WriteHeader(http.StatusNoContent)
+}
+
 type LoginDto struct {
 	Username string `json:"username" validate:"required,username"`
 	Password string `json:"password" validate:"required,password"`
@@ -223,11 +308,7 @@ type LoginDto struct {
 // @Router /login [post]
 func (app *application) PostLogin(writer http.ResponseWriter, request *http.Request) {
 	var login LoginDto
-	if err := json.NewDecoder(request.Body).Decode(&login); err != nil {
-		respondBadRequest(writer, err)
-		return
-	}
-	if err := app.Validate.Struct(login); err != nil {
+	if err := app.ParseAndValidateRequestBody(request, &login); err != nil {
 		respondBadRequest(writer, err)
 		return
 	}
@@ -308,27 +389,6 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-type ProfileResultDto struct {
-	Id   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
-}
-
-// @Summary See current user
-// @Success 200 {object} ProfileResultDto "Current user profile"
-// @Router /me [get]
-func (app *application) GetMe(writer http.ResponseWriter, request *http.Request) {
-	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-
-	id, err := uuid.Parse((*claims)["sub"].(string))
-	if err != nil {
-		http.Error(writer, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	
-	resultDto := ProfileResultDto{Id: id, Name: (*claims)["name"].(string)}
-	respondJson(writer, http.StatusOK, resultDto)
-}
-
 // @Summary Commit unalive
 // @Success 204
 // @Router /logout [post]
@@ -354,4 +414,25 @@ func (app *application) PostLogout(writer http.ResponseWriter, request *http.Req
 		Secure:   !app.Environment.IsDevelopment,
 	})
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+type ProfileResultDto struct {
+	Id   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// @Summary See current user
+// @Success 200 {object} ProfileResultDto "Current user profile"
+// @Router /me [get]
+func (app *application) GetMe(writer http.ResponseWriter, request *http.Request) {
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+
+	id, err := uuid.Parse((*claims)["sub"].(string))
+	if err != nil {
+		respondUnauthorized(writer)
+		return
+	}
+	
+	resultDto := ProfileResultDto{Id: id, Name: (*claims)["name"].(string)}
+	respondJson(writer, http.StatusOK, resultDto)
 }
