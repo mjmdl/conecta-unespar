@@ -30,7 +30,11 @@ const docTemplate = `{
                         }
                     }
                 ],
-                "responses": {}
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
             }
         },
         "/logout": {
@@ -57,7 +61,11 @@ const docTemplate = `{
                         }
                     }
                 ],
-                "responses": {}
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
             }
         },
         "/me": {
@@ -69,6 +77,44 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/main.ProfileResultDto"
                         }
+                    }
+                }
+            }
+        },
+        "/profile-picture": {
+            "get": {
+                "summary": "Retrieve profile picture",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            },
+            "put": {
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "summary": "Update profile picture",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Profile picture",
+                        "name": "picture",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Remove profile picture",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     }
                 }
             }

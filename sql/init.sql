@@ -46,4 +46,28 @@ CREATE TABLE IF NOT EXISTS cu.session (
 INSERT INTO cu.account (name, username, password)
 VALUES ('Elefante do PostgreSQL', 'psql', 'postgres');
 
+CREATE TYPE cu.attach_kind AS ENUM (
+	'account_picture',
+	'chat_picture',
+	'post_file'
+);
+
+CREATE TABLE IF NOT EXISTS cu.attach (
+	id         UUID           NOT NULL DEFAULT cu.uuid_new(),
+	kind       cu.attach_kind NOT NULL,
+	account_id UUID,
+	filename   TEXT NOT NULL,
+	content    BYTEA NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	deleted_at TIMESTAMPTZ,
+	CONSTRAINT attach_pk  PRIMARY KEY (id),
+	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id)
+);
+
+CREATE UNIQUE INDEX attach_ux_accout_picture
+ON cu.attach (account_id)
+WHERE
+	kind = 'account_picture'
+	AND deleted_at IS NULL;
+
 COMMIT;

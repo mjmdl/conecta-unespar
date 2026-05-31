@@ -42,7 +42,9 @@ paths:
         required: true
         schema:
           $ref: '#/definitions/main.LoginDto'
-      responses: {}
+      responses:
+        "204":
+          description: No Content
       summary: Authenticate
   /logout:
     post:
@@ -59,7 +61,9 @@ paths:
         required: true
         schema:
           $ref: '#/definitions/main.LogupDto'
-      responses: {}
+      responses:
+        "204":
+          description: No Content
       summary: Create account
   /me:
     get:
@@ -69,6 +73,30 @@ paths:
           schema:
             $ref: '#/definitions/main.ProfileResultDto'
       summary: See current user
+  /profile-picture:
+    delete:
+      responses:
+        "204":
+          description: No Content
+      summary: Remove profile picture
+    get:
+      responses:
+        "200":
+          description: OK
+      summary: Retrieve profile picture
+    put:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Profile picture
+        in: formData
+        name: picture
+        required: true
+        type: file
+      responses:
+        "204":
+          description: No Content
+      summary: Update profile picture
 securityDefinitions:
   CookieAuth:
     in: cookie

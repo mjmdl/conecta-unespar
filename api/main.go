@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	swagger "github.com/swaggo/http-swagger"
@@ -86,6 +88,9 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Use(app.AuthMiddleware)
 			router.Post("/logout", app.PostLogout)
 			router.Get("/me", app.GetMe)
+			router.Put("/profile-picture", app.PutProfilePicture)
+			router.Delete("/profile-picture", app.DeleteProfilePicture)
+			router.Get("/profile-picture", app.GetProfilePicture)
 		})
 	})
 }
@@ -151,8 +156,16 @@ func respondJson(writer http.ResponseWriter, status int, data any) error {
 	return json.NewEncoder(writer).Encode(data)
 }
 
-func respondBadRequest(writer http.ResponseWriter, err error) {
-	http.Error(writer, "bad request: " + err.Error(), http.StatusBadRequest)
+func respondBadRequestError(writer http.ResponseWriter, err error) {
+	respondBadRequestMessage(writer, err.Error())
+}
+
+func respondBadRequestMessage(writer http.ResponseWriter, message string) {
+	http.Error(writer, "bad request: " + message, http.StatusBadRequest)
+}
+
+func respondNotFound(writer http.ResponseWriter) {
+	http.Error(writer, "not found", http.StatusNotFound)
 }
 
 func respondConflict(writer http.ResponseWriter, message string) {
@@ -241,11 +254,12 @@ type LogupDto struct {
 
 // @Summary Create account
 // @Param body body LogupDto true "Account data"
+// @Success 204
 // @Router /logup [post]
 func (app *application) PostLogup(writer http.ResponseWriter, request *http.Request) {
 	var logup LogupDto
 	if err := app.ParseAndValidateRequestBody(request, &logup); err != nil {
-		respondBadRequest(writer, err)
+		respondBadRequestError(writer, err)
 		return
 	}
 
@@ -305,11 +319,12 @@ type LoginDto struct {
 // @Summary Authenticate
 // @Description Generates the access-token cookie.
 // @Param body body LoginDto true "Authentication payload"
+// @Success 204
 // @Router /login [post]
 func (app *application) PostLogin(writer http.ResponseWriter, request *http.Request) {
 	var login LoginDto
 	if err := app.ParseAndValidateRequestBody(request, &login); err != nil {
-		respondBadRequest(writer, err)
+		respondBadRequestError(writer, err)
 		return
 	}
 
@@ -435,4 +450,137 @@ func (app *application) GetMe(writer http.ResponseWriter, request *http.Request)
 	
 	resultDto := ProfileResultDto{Id: id, Name: (*claims)["name"].(string)}
 	respondJson(writer, http.StatusOK, resultDto)
+}
+
+// @Summary Update profile picture
+// @Accept multipart/form-data
+// @Param picture formData file true "Profile picture"
+// @Success 204
+// @Router /profile-picture [put]
+func (app *application) PutProfilePicture(writer http.ResponseWriter, request *http.Request) {
+	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	accountId := (*claims)["sub"].(string)
+
+	transaction, err := app.Database.Begin(request.Context())
+	if err != nil {
+		respondInternalServerError(writer, err, "failed to begin a transaction")
+		return;
+	}
+	defer transaction.Rollback(request.Context())
+
+	file, header, err := request.FormFile("picture")
+	if err != nil {
+		respondBadRequestMessage(writer, "invalid file")
+		return
+	}
+	
+	data, err := io.ReadAll(file)
+	if err != nil {
+		respondBadRequestMessage(writer, "invalid file")
+		return
+	}
+
+	const sqlDeleteAttach = `
+		UPDATE cu.attach
+		SET deleted_at = NOW()
+		WHERE
+			account_id = $1
+			AND deleted_at IS NULL;
+	`
+	if _, err := transaction.Exec(request.Context(), sqlDeleteAttach, accountId); err != nil {
+		respondQueryFailed(writer, err, sqlDeleteAttach)
+		return
+	}
+
+	const sqlInsertAttach = `
+		INSERT INTO cu.attach (kind, account_id, filename, content)
+		VALUES ('account_picture', $1::UUID, $2::TEXT, $3::BYTEA)
+	`
+	if _, err := transaction.Exec(request.Context(), sqlInsertAttach, accountId, header.Filename, data); err != nil {
+		respondQueryFailed(writer, err, sqlInsertAttach)
+		return
+	}
+
+	if err := transaction.Commit(request.Context()); err != nil {
+		respondInternalServerError(writer, err, "failed to commit transaction")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// @Summary Remove profile picture
+// @Success 204
+// @Router /profile-picture [delete]
+func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request *http.Request) {
+	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	accountId := (*claims)["sub"].(string)
+
+	const sqlDeleteAttach = `
+		WITH soft_delete AS (
+			UPDATE cu.attach
+			SET deleted_at = NOW()
+			WHERE
+				account_id = $1
+				AND kind = 'account_picture'
+				AND deleted_at IS NULL
+			RETURNING id
+		)
+		SELECT EXISTS (
+			SELECT 1
+			FROM soft_delete
+		);
+	`
+	var pictureExists bool
+	if err := app.Database.
+		QueryRow(request.Context(), sqlDeleteAttach, accountId).
+		Scan(&pictureExists); err != nil {
+		
+		respondQueryFailed(writer, err, sqlDeleteAttach)
+		return
+	}
+	
+	if !pictureExists {
+		respondNotFound(writer)
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+	
+// @Summary Retrieve profile picture
+// @Success 200
+// @Router /profile-picture [get]
+func (app *application) GetProfilePicture(writer http.ResponseWriter, request *http.Request) {
+	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	accountId := (*claims)["sub"].(string)
+
+	const sqlFindProfilePicture = `
+		SELECT
+			attach.filename,
+			attach.content
+		FROM cu.attach
+		WHERE
+			attach.account_id = $1::UUID
+			AND attach.kind = 'account_picture'
+			AND attach.deleted_at IS NULL
+	`
+	
+	var filename string
+	var data     []byte
+	if err := app.Database.
+		QueryRow(request.Context(), sqlFindProfilePicture, accountId).
+		Scan(&filename, &data); err != nil {
+
+		if err == pgx.ErrNoRows {
+			respondNotFound(writer)
+		} else {
+			respondQueryFailed(writer, err, sqlFindProfilePicture)
+		}
+		return
+	}
+
+	writer.Header().Set("Content-Disposition", `inline; filename="` + filename + `"`)
+	writer.Header().Set("Content-Type", "application/octet-stream")
+	writer.WriteHeader(http.StatusOK)
+	writer.Write(data)
 }
