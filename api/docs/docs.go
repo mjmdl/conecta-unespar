@@ -17,6 +17,7 @@ const docTemplate = `{
     "paths": {
         "/login": {
             "post": {
+                "description": "Generates the access-token cookie.",
                 "summary": "Authenticate",
                 "parameters": [
                     {
@@ -29,11 +30,27 @@ const docTemplate = `{
                         }
                     }
                 ],
+                "responses": {}
+            }
+        },
+        "/logout": {
+            "post": {
+                "summary": "Commit unalive",
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/me": {
+            "get": {
+                "summary": "See current user",
+                "responses": {
+                    "200": {
+                        "description": "Current user profile",
                         "schema": {
-                            "$ref": "#/definitions/main.LoginSuccessDto"
+                            "$ref": "#/definitions/main.ProfileResultDto"
                         }
                     }
                 }
@@ -56,16 +73,23 @@ const docTemplate = `{
                 }
             }
         },
-        "main.LoginSuccessDto": {
+        "main.ProfileResultDto": {
             "type": "object",
             "properties": {
-                "accessToken": {
+                "id": {
                     "type": "string"
                 },
-                "expiresAt": {
+                "name": {
                     "type": "string"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "CookieAuth": {
+            "type": "apiKey",
+            "name": "access-token",
+            "in": "cookie"
         }
     }
 }`

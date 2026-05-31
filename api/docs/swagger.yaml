@@ -9,11 +9,11 @@ definitions:
     - password
     - username
     type: object
-  main.LoginSuccessDto:
+  main.ProfileResultDto:
     properties:
-      accessToken:
+      id:
         type: string
-      expiresAt:
+      name:
         type: string
     type: object
 info:
@@ -21,6 +21,7 @@ info:
 paths:
   /login:
     post:
+      description: Generates the access-token cookie.
       parameters:
       - description: Authentication payload
         in: body
@@ -28,10 +29,25 @@ paths:
         required: true
         schema:
           $ref: '#/definitions/main.LoginDto'
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/main.LoginSuccessDto'
+      responses: {}
       summary: Authenticate
+  /logout:
+    post:
+      responses:
+        "204":
+          description: No Content
+      summary: Commit unalive
+  /me:
+    get:
+      responses:
+        "200":
+          description: Current user profile
+          schema:
+            $ref: '#/definitions/main.ProfileResultDto'
+      summary: See current user
+securityDefinitions:
+  CookieAuth:
+    in: cookie
+    name: access-token
+    type: apiKey
 swagger: "2.0"

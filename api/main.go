@@ -1,3 +1,6 @@
+// @securityDefinitions.apikey CookieAuth
+// @in cookie
+// @name access-token
 package main
 
 import (
@@ -21,15 +24,9 @@ import (
 )
 
 func main() {
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Fatal(err);
-	}
-
-	serverPort  := requireEnv("SERVER_PORT")
-	databaseUrl := requireEnv("DATABASE_URL")
-	_            = requireEnv("ACCESS_SECRET")
+	environment := getEnvironmentVariables()
 	
-	connectionPool, err := pgxpool.New(context.Background(), databaseUrl)
+	connectionPool, err := pgxpool.New(context.Background(), environment.DatabaseUrl)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,23 +36,27 @@ func main() {
 	validate.RegisterValidation("username", validateUsername)
 	validate.RegisterValidation("password", validatePassword)
 	
-	app := appProvider{
-		Database: connectionPool,
-		Validate: validate,
-	}
-	
 	router := chi.NewRouter()
-	router.Get("/swagger/*", swagger.WrapHandler)
-	router.Post("/login", app.PostLogin)
-	http.ListenAndServe(":" + serverPort, router)
+
+	app := application{
+		Environment: environment,
+		Database:    connectionPool,
+		Validate:    validate,
+	}
+	app.setupRoutes(router)
+
+	log.Printf("Listening to :%s", environment.ServerPort)
+	http.ListenAndServe(":" + environment.ServerPort, router)
 }
 
-func requireEnv(name string) string {
-	value, ok := os.LookupEnv(name)
-	if !ok {
-		log.Fatal("Environment variable %s is not set.", name)
-	}
-	return value
+/*
+ * Application
+ */
+
+type application struct {
+	Environment environmentVariables
+	Database    *pgxpool.Pool
+	Validate    *validator.Validate
 }
 
 func validateUsername(field validator.FieldLevel) bool {
@@ -68,42 +69,172 @@ func validatePassword(field validator.FieldLevel) bool {
 	return 8 <= length && length <= 100
 }
 
-type appProvider struct {
-	Database *pgxpool.Pool
-	Validate *validator.Validate
+func (app *application) setupRoutes(router chi.Router) {
+	router.Route("/", func(router chi.Router) {
+		if app.Environment.IsDevelopment {
+			router.Get("/swagger/*", swagger.WrapHandler)
+		}
+		router.Post("/login", app.PostLogin)
+		router.Group(func(router chi.Router) {
+			router.Use(app.AuthMiddleware)
+			router.Get("/me", app.GetMe)
+			router.Post("/logout", app.PostLogout)
+		})
+	})
 }
+
+/*
+ * Environment Variables
+ */
+
+type environmentVariables struct {
+	IsDevelopment bool
+	DatabaseUrl   string
+	ServerPort    string
+	AccessSecret  string
+}
+
+func getEnvironmentVariables() environmentVariables {
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Fatal(err);
+	}
+
+	environment := requireEnvironmentVariable("ENVIRONMENT")
+	if environment != "production" && environment != "development" {
+		log.Printf(".env.ENVIRONMENT is expected to be either production or development")
+	}
+	
+	return environmentVariables{
+		IsDevelopment: environment == "development",
+		ServerPort:    requireEnvironmentVariable("SERVER_PORT"),
+		DatabaseUrl:   requireEnvironmentVariable("DATABASE_URL"),
+		AccessSecret:  requireEnvironmentVariable("ACCESS_SECRET"),
+	}
+}
+
+func requireEnvironmentVariable(name string) string {
+	value, ok := os.LookupEnv(name)
+	if !ok {
+		log.Fatal("Environment variable %s is not set: ", name)
+	}
+	return value
+}
+
+/*
+ * Utilities
+ */
+
+type userClaimsKey struct {}
+
+const accessTokenName = "access-token"
+
+func respondJson(writer http.ResponseWriter, status int, data any) error {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	return json.NewEncoder(writer).Encode(data)
+}
+
+func respondBadRequest(writer http.ResponseWriter, err error) {
+	http.Error(writer, "bad request: " + err.Error(), http.StatusBadRequest)
+}
+
+func respondUnauthorized(writer http.ResponseWriter) {
+	http.Error(writer, "unauthorized", http.StatusUnauthorized)
+}
+
+func respondInternalServerError(writer http.ResponseWriter, err error, description string, args ...any) {
+	log.Println(append([]any{description}, append(args, err.Error())...)...)
+	http.Error(writer, "internal server error", http.StatusInternalServerError)
+}
+
+func respondQueryFailed(writer http.ResponseWriter, err error, query string) {
+	respondInternalServerError(writer, err, "query failed", query)
+}
+
+/*
+ * Middlewares
+ */
+
+func (app *application) AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		cookie, err := request.Cookie(accessTokenName)
+		if err != nil {
+			respondUnauthorized(writer)
+			return
+		}
+
+		token, err := jwt.ParseWithClaims(cookie.Value, &jwt.MapClaims{}, func(token *jwt.Token) (any, error) {
+			return []byte(app.Environment.AccessSecret), nil
+		})
+		if err != nil {
+			respondUnauthorized(writer)
+			return
+		}
+
+		claims, ok := token.Claims.(*jwt.MapClaims)
+		if !ok || !token.Valid {
+			respondUnauthorized(writer)
+			return
+		}
+
+		const sqlCheckSession = `
+			SELECT EXISTS (
+				SELECT 1
+				FROM cu.session
+				WHERE
+					session.id = $1::UUID
+					AND session.logout_at IS NULL
+					AND session.expires_at > NOW()
+			);
+		`
+		
+		sessionId := (*claims)["sid"].(string)
+		var isValid bool
+		if err := app.Database.
+			QueryRow(request.Context(), sqlCheckSession, sessionId).
+			Scan(&isValid); err != nil {
+
+			respondQueryFailed(writer, err, sqlCheckSession)
+			return
+		}
+
+		if (!isValid) {
+			respondUnauthorized(writer)
+			return
+		}
+
+		authenticatedContext := context.WithValue(request.Context(), userClaimsKey{}, claims)
+		next.ServeHTTP(writer, request.WithContext(authenticatedContext))
+	})
+}
+
+/*
+ * Endpoints
+ */
 
 type LoginDto struct {
 	Username string `json:"username" validate:"required,username"`
 	Password string `json:"password" validate:"required,password"`
 }
 
-type LoginSuccessDto struct {
-	AccessToken string    `json:"accessToken"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-}
-
 // @Summary Authenticate
+// @Description Generates the access-token cookie.
 // @Param body body LoginDto true "Authentication payload"
-// @Success 201 {object} LoginSuccessDto
 // @Router /login [post]
-func (app *appProvider) PostLogin(writer http.ResponseWriter, request *http.Request) {
-	accessTokenSecret := requireEnv("ACCESS_SECRET")
-	
+func (app *application) PostLogin(writer http.ResponseWriter, request *http.Request) {
 	var login LoginDto
 	if err := json.NewDecoder(request.Body).Decode(&login); err != nil {
-		http.Error(writer, "invalid format: " + err.Error(), http.StatusBadRequest)
+		respondBadRequest(writer, err)
 		return
 	}
 	if err := app.Validate.Struct(login); err != nil {
-		http.Error(writer, "validation failed: " + err.Error(), http.StatusBadRequest)
+		respondBadRequest(writer, err)
 		return
 	}
 
 	transaction, err := app.Database.Begin(request.Context())
 	if err != nil {
-		log.Println("failed to begin a transaction", err.Error())
-		http.Error(writer, "internal server error", http.StatusInternalServerError)
+		respondInternalServerError(writer, err, "failed to begin a transaction")
 		return;
 	}
 	defer transaction.Rollback(request.Context())
@@ -121,9 +252,11 @@ func (app *appProvider) PostLogin(writer http.ResponseWriter, request *http.Requ
 	var accountId uuid.UUID
 	var name      string
 	var password  string
-	if err := transaction.QueryRow(request.Context(), sqlFindCredentials, login.Username).Scan(&accountId, &name, &password); err != nil {
-		log.Println("query failed", sqlFindCredentials, err.Error())
-		http.Error(writer, "internal server error", http.StatusInternalServerError)
+	if err := transaction.
+		QueryRow(request.Context(), sqlFindCredentials, login.Username).
+		Scan(&accountId, &name, &password); err != nil {
+
+		respondQueryFailed(writer, err, sqlFindCredentials)
 		return
 	}
 
@@ -139,14 +272,15 @@ func (app *appProvider) PostLogin(writer http.ResponseWriter, request *http.Requ
 	`
 	var sessionId uuid.UUID
 	expiresAt := time.Now().Add(time.Hour * 24)
-	if err := transaction.QueryRow(request.Context(), sqlCreateSession, accountId, expiresAt).Scan(&sessionId); err != nil {
-		log.Println("query failed", sqlCreateSession, err.Error())
-		http.Error(writer, "internal server error", http.StatusInternalServerError)
+	if err := transaction.
+		QueryRow(request.Context(), sqlCreateSession, accountId, expiresAt).
+		Scan(&sessionId); err != nil {
+		
+		respondQueryFailed(writer, err, sqlCreateSession)
 		return
 	}
 	if err := transaction.Commit(request.Context()); err != nil {
-		log.Println("failed to commit transaction", sqlCreateSession, err.Error())
-		http.Error(writer, "internal server error", http.StatusInternalServerError)
+		respondInternalServerError(writer, err, "failed to commit transaction")
 		return
 	}
 
@@ -157,17 +291,67 @@ func (app *appProvider) PostLogin(writer http.ResponseWriter, request *http.Requ
 		"exp":  expiresAt.Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signedToken, err := token.SignedString([]byte(accessTokenSecret))
+	signedToken, err := token.SignedString([]byte(app.Environment.AccessSecret))
 	if err != nil {
 		log.Println("failed to sign token", err.Error())
 		http.Error(writer, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	success := LoginSuccessDto{
-		AccessToken: signedToken,
-		ExpiresAt: expiresAt,
+	http.SetCookie(writer, &http.Cookie{
+		Name:     accessTokenName,
+		Value:    signedToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   !app.Environment.IsDevelopment,
+	})
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+type ProfileResultDto struct {
+	Id   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// @Summary See current user
+// @Success 200 {object} ProfileResultDto "Current user profile"
+// @Router /me [get]
+func (app *application) GetMe(writer http.ResponseWriter, request *http.Request) {
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+
+	id, err := uuid.Parse((*claims)["sub"].(string))
+	if err != nil {
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		return
 	}
-	writer.WriteHeader(http.StatusCreated)
-	json.NewEncoder(writer).Encode(success)
+	
+	resultDto := ProfileResultDto{Id: id, Name: (*claims)["name"].(string)}
+	respondJson(writer, http.StatusOK, resultDto)
+}
+
+// @Summary Commit unalive
+// @Success 204
+// @Router /logout [post]
+func (app *application) PostLogout(writer http.ResponseWriter, request *http.Request) {
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	sessionId := (*claims)["sid"].(string)
+
+	const sqlLogout = `
+		UPDATE cu.session
+		SET logout_at = NOW()
+		WHERE id = $1::UUID;
+	`
+	if _, err := app.Database.Exec(request.Context(), sqlLogout, sessionId); err != nil {
+		respondQueryFailed(writer, err, sqlLogout)
+		return
+	}
+
+	http.SetCookie(writer, &http.Cookie{
+		Name:     accessTokenName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   !app.Environment.IsDevelopment,
+	})
+	writer.WriteHeader(http.StatusNoContent)
 }
