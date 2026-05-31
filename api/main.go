@@ -33,19 +33,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer connectionPool.Close()
-
-	validate := validator.New()
-	validate.RegisterValidation("accountName", validateAccountName)
-	validate.RegisterValidation("username", validateUsername)
-	validate.RegisterValidation("password", validatePassword)
 	
-	router := chi.NewRouter()
-
 	app := application{
 		Environment: environment,
 		Database:    connectionPool,
-		Validate:    validate,
+		Validate:    createValidate(),
 	}
+	
+	router := chi.NewRouter()
 	app.setupRoutes(router)
 
 	log.Printf("Listening to :%s", environment.ServerPort)
@@ -62,21 +57,6 @@ type application struct {
 	Validate    *validator.Validate
 }
 
-func validateAccountName(field validator.FieldLevel) bool {
-	length := len(field.Field().String())
-	return 3 <= length && length <= 100
-}
-
-func validateUsername(field validator.FieldLevel) bool {
-	length := len(field.Field().String())
-	return 3 <= length && length <= 100
-}
-
-func validatePassword(field validator.FieldLevel) bool {
-	length := len(field.Field().String())
-	return 8 <= length && length <= 100
-}
-
 func (app *application) setupRoutes(router chi.Router) {
 	router.Route("/", func(router chi.Router) {
 		if app.Environment.IsDevelopment {
@@ -91,6 +71,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Put("/profile-picture", app.PutProfilePicture)
 			router.Delete("/profile-picture", app.DeleteProfilePicture)
 			router.Get("/profile-picture", app.GetProfilePicture)
+			router.Put("/direct-chat", app.PutDirectChat)
 		})
 	})
 }
@@ -103,6 +84,33 @@ func (app *application) ParseAndValidateRequestBody(request *http.Request, into 
 		return err
 	}
 	return nil
+}
+
+/*
+ * Validators
+ */
+
+func createValidate() *validator.Validate {
+	validate := validator.New()
+	validate.RegisterValidation("accountName", validateAccountName)
+	validate.RegisterValidation("username", validateUsername)
+	validate.RegisterValidation("password", validatePassword)
+	return validate
+}
+
+func validateAccountName(field validator.FieldLevel) bool {
+	length := len(field.Field().String())
+	return 3 <= length && length <= 100
+}
+
+func validateUsername(field validator.FieldLevel) bool {
+	length := len(field.Field().String())
+	return 3 <= length && length <= 100
+}
+
+func validatePassword(field validator.FieldLevel) bool {
+	length := len(field.Field().String())
+	return 8 <= length && length <= 100
 }
 
 /*
@@ -252,6 +260,7 @@ type LogupDto struct {
 	Password string `json:"password" validate:"required,password"`
 }
 
+// @Tags User
 // @Summary Create account
 // @Param body body LogupDto true "Account data"
 // @Success 204
@@ -307,7 +316,10 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	transaction.Commit(request.Context())
+	if err := transaction.Commit(request.Context()); err != nil {
+		respondInternalServerError(writer, err, "failed to commit transaction")
+		return
+	}
 	writer.WriteHeader(http.StatusNoContent)
 }
 
@@ -316,6 +328,7 @@ type LoginDto struct {
 	Password string `json:"password" validate:"required,password"`
 }
 
+// @Tags User
 // @Summary Authenticate
 // @Description Generates the access-token cookie.
 // @Param body body LoginDto true "Authentication payload"
@@ -404,6 +417,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 	writer.WriteHeader(http.StatusNoContent)
 }
 
+// @Tags User
 // @Summary Commit unalive
 // @Success 204
 // @Router /logout [post]
@@ -436,6 +450,7 @@ type ProfileResultDto struct {
 	Name string    `json:"name"`
 }
 
+// @Tags User
 // @Summary See current user
 // @Success 200 {object} ProfileResultDto "Current user profile"
 // @Router /me [get]
@@ -452,6 +467,7 @@ func (app *application) GetMe(writer http.ResponseWriter, request *http.Request)
 	respondJson(writer, http.StatusOK, resultDto)
 }
 
+// @Tags User
 // @Summary Update profile picture
 // @Accept multipart/form-data
 // @Param picture formData file true "Profile picture"
@@ -508,6 +524,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 	writer.WriteHeader(http.StatusNoContent)
 }
 
+// @Tags User
 // @Summary Remove profile picture
 // @Success 204
 // @Router /profile-picture [delete]
@@ -547,6 +564,7 @@ func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request
 	writer.WriteHeader(http.StatusNoContent)
 }
 	
+// @Tags User
 // @Summary Retrieve profile picture
 // @Success 200
 // @Router /profile-picture [get]
@@ -583,4 +601,205 @@ func (app *application) GetProfilePicture(writer http.ResponseWriter, request *h
 	writer.Header().Set("Content-Type", "application/octet-stream")
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(data)
+}
+
+type UpdateDirectChatDto struct {
+	OtherAccountId uuid.UUID `json:"otherAccountId" validate:"required"`
+	DoPin          *bool     `json:"doPin,omitempty"`
+	DoFriend       *bool     `json:"doFriend,omitempty"`
+	DoMute         *bool     `json:"doMute,omitempty"`
+	DoBlock        *bool     `json:"doBlock,omitempty"`
+}
+
+type UpdateDirectChatResultDto struct {
+	ChatId uuid.UUID `json:"chatId"`
+}
+
+// @Tags Chat
+// @Summary Update direct chat with another user.
+// @Param body body UpdateDirectChatDto true "Direct chat options."
+// @Success 204 "Changes applied to direct chat."
+// @Success 201 {object} UpdateDirectChatResultDto "Direct chat created."
+// @Router /direct-chat [put]
+func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.Request) {
+	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	userAccountId := (*claims)["sub"].(string)
+
+	var chat UpdateDirectChatDto
+	if err := app.ParseAndValidateRequestBody(request, &chat); err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	transaction, err := app.Database.Begin(request.Context())
+	if err != nil {
+		respondInternalServerError(writer, err, "failed to begin a transaction")
+		return;
+	}
+	defer transaction.Rollback(request.Context())
+	
+	const sqlFindChat = `
+		WITH params AS (
+			SELECT
+				$1::UUID AS user_account_id,
+				$2::UUID AS his_account_id
+		)
+		SELECT
+			chat.id                                        AS "chatId",
+			user_member.is_chat_pinned                     AS "isUsersPin",
+			COALESCE(user_member.is_direct_friend, FALSE)  AS "isUsersFriend",
+			COALESCE(his_member.is_direct_friend, FALSE)   AS "isHisFriend",
+			user_member.is_chat_muted                      AS "isUsersMute",
+			COALESCE(user_member.is_direct_blocked, FALSE) AS "isUsersBlock",
+			COALESCE(his_member.is_direct_blocked, FALSE)  AS "isHisBlock"
+		FROM
+			cu.chat
+			INNER JOIN cu.member AS user_member
+				ON user_member.chat_id = chat.id
+				AND user_member.valid_to IS NULL
+			INNER JOIN cu.member AS his_member
+				ON his_member.chat_id = chat.id
+				AND his_member.valid_to IS NULL
+			INNER JOIN params
+				ON params.user_account_id = user_member.account_id
+				AND params.his_account_id = his_member.account_id
+		WHERE
+			chat.kind = 'direct'::cu.chat_kind
+			AND chat.valid_to IS NULL
+		LIMIT 1
+	`
+	var (
+		chatId        uuid.UUID
+		isUsersPin    bool
+		isUsersFriend bool
+		isHisFriend   bool
+		isUsersMute   bool
+		isUsersBlock  bool
+		isHisBlock    bool
+	)
+	err = transaction.
+		QueryRow(request.Context(), sqlFindChat, userAccountId, chat.OtherAccountId).
+		Scan(&chatId, &isUsersPin, &isUsersFriend, &isHisFriend, &isUsersMute, &isUsersBlock, &isHisBlock)
+	if err == nil {
+		if isHisBlock {
+			respondConflict(writer, "you are blocked")
+			return
+		}
+
+		if chat.DoFriend != nil && *chat.DoFriend == isUsersFriend { chat.DoFriend = nil }
+		if chat.DoPin != nil && *chat.DoPin == isUsersPin          { chat.DoPin = nil }
+		if chat.DoMute != nil && *chat.DoMute == isUsersMute       { chat.DoMute = nil }
+		if chat.DoBlock != nil && *chat.DoBlock == isUsersBlock    { chat.DoBlock = nil }
+
+		if chat.DoFriend == nil && chat.DoPin == nil && chat.DoMute == nil && chat.DoBlock == nil {
+			respondConflict(writer, "nothing to update")
+			return
+		}
+
+		if chat.DoFriend != nil && *chat.DoFriend && !isHisFriend {
+			// TODO: Notify friend request.
+		}
+
+		const sqlUpdateChat = `
+			WITH params AS (
+				SELECT
+					$1::UUID AS chat_id,
+					$2::UUID AS user_account_id,
+					$3::BOOLEAN AS is_user_pin,
+					$4::BOOLEAN AS is_user_mute,
+					$5::BOOLEAN AS is_user_friend,
+					$6::BOOLEAN AS is_user_block
+			)
+			UPDATE cu.member AS member
+			SET
+				is_chat_pinned    = COALESCE(params.is_user_pin, member.is_chat_pinned),
+				is_chat_muted     = COALESCE(params.is_user_mute, member.is_chat_muted),
+				is_direct_friend  = COALESCE(params.is_user_friend, member.is_direct_friend),
+				is_direct_blocked = COALESCE(params.is_user_block, member.is_direct_blocked)
+			FROM params
+			WHERE
+				member.account_id = params.user_account_id
+				AND member.chat_id = params.chat_id
+				AND member.valid_to IS NULL;
+		`
+		if _, err := transaction.Exec(request.Context(), sqlUpdateChat, chatId, userAccountId, chat.DoPin, chat.DoMute, chat.DoFriend, chat.DoBlock); err != nil {
+			respondQueryFailed(writer, err, sqlUpdateChat)
+			return
+		}
+		
+		writer.WriteHeader(http.StatusNoContent)
+	} else if err == pgx.ErrNoRows {
+		const sqlCreateChat = `
+			WITH params AS (
+				SELECT
+					$1::UUID    AS user_account_id,
+					$2::UUID    AS his_account_id,
+					$3::BOOLEAN AS is_user_pin,
+					$4::BOOLEAN AS is_user_mute,
+					$5::BOOLEAN AS is_user_friend,
+					$6::BOOLEAN AS is_user_block
+			),
+			chat AS MATERIALIZED (
+				INSERT INTO cu.chat (kind, name)
+				VALUES ('direct'::cu.chat_kind, '')
+				RETURNING chat.id
+			),
+			members AS MATERIALIZED (
+				INSERT INTO cu.member (
+					account_id,
+					chat_id,
+					is_chat_pinned,
+					is_chat_muted,
+					is_direct_friend,
+					is_direct_blocked
+				) (
+					SELECT
+						params.user_account_id::UUID,
+						chat.id,
+						COALESCE(params.is_user_pin, FALSE),
+						COALESCE(params.is_user_mute, FALSE),
+						params.is_user_friend,
+						params.is_user_block
+					FROM
+						chat,
+						params
+					UNION ALL
+					SELECT
+						params.his_account_id::UUID,
+						chat.id,
+						FALSE,
+						FALSE,
+						NULL,
+						NULL
+					FROM
+						chat,
+						params
+				)
+				RETURNING member.id
+			)
+			SELECT chat.id
+			FROM
+				chat,
+				members;
+		`
+		var chatId uuid.UUID
+		if err := transaction.
+			QueryRow(request.Context(), sqlCreateChat, userAccountId, chat.OtherAccountId, chat.DoPin, chat.DoFriend, chat.DoMute, chat.DoBlock).
+			Scan(&chatId); err != nil {
+
+			respondQueryFailed(writer, err, sqlFindChat)
+			return
+		}
+
+		result := UpdateDirectChatResultDto{ChatId: chatId}
+		respondJson(writer, http.StatusCreated, result)
+	} else {
+		respondQueryFailed(writer, err, sqlFindChat)
+		return
+	}
+	
+	if err := transaction.Commit(request.Context()); err != nil {
+		respondInternalServerError(writer, err, "failed to commit transaction")
+		return
+	}
 }

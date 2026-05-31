@@ -15,14 +15,14 @@ $$;
 
 CREATE TABLE IF NOT EXISTS cu.account (
 	id         UUID NOT NULL DEFAULT cu.uuid_new(),
-        name       TEXT NOT NULL,
-        username   TEXT NOT NULL,
-        password   TEXT NOT NULL,
-        valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        valid_to   TIMESTAMPTZ,
-        valid_id   UUID NOT NULL DEFAULT cu.uuid_new(),
-        CONSTRAINT account_pk PRIMARY KEY (id),
-        CONSTRAINT ck_valid   CHECK (valid_from < valid_to)
+	name       TEXT NOT NULL,
+	username   TEXT NOT NULL,
+	password   TEXT NOT NULL,
+	valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to   TIMESTAMPTZ,
+	valid_id   UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT account_pk PRIMARY KEY (id),
+	CONSTRAINT ck_valid   CHECK (valid_from < valid_to)
 );
 
 CREATE UNIQUE INDEX account_ux_username
@@ -35,16 +35,59 @@ WHERE valid_to IS NULL;
 
 CREATE TABLE IF NOT EXISTS cu.session (
 	id UUID NOT NULL DEFAULT cu.uuid_new(),
-        account_id UUID NOT NULL,
-        login_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        expires_at TIMESTAMPTZ NOT NULL,
-        logout_at TIMESTAMPTZ,
-        CONSTRAINT session_pk PRIMARY KEY (id),
-        CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id)
+	account_id UUID NOT NULL,
+	login_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	expires_at TIMESTAMPTZ NOT NULL,
+	logout_at TIMESTAMPTZ,
+	CONSTRAINT session_pk PRIMARY KEY (id),
+	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id)
 );
 
 INSERT INTO cu.account (name, username, password)
 VALUES ('Elefante do PostgreSQL', 'psql', 'postgres');
+
+CREATE TYPE cu.chat_kind AS ENUM (
+	'direct',
+	'group'
+);
+
+CREATE TABLE cu.chat (
+	id          UUID NOT NULL DEFAULT cu.uuid_new(),
+	kind        cu.chat_kind NOT NULL,
+	name        TEXT NOT NULL,
+	description TEXT,
+	valid_from  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to    TIMESTAMPTZ,
+	valid_id    UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT chat_pk  PRIMARY KEY (id),
+	CONSTRAINT ck_valid CHECK (valid_from < valid_to)
+);
+
+CREATE TABLE cu.member (
+	id                UUID NOT NULL DEFAULT cu.uuid_new(),
+	account_id        UUID NOT NULL,
+	chat_id           UUID NOT NULL,
+	is_chat_pinned    BOOLEAN NOT NULL DEFAULT FALSE,
+	is_chat_muted     BOOLEAN NOT NULL DEFAULT FALSE,
+	is_direct_friend  BOOLEAN,
+	is_direct_blocked BOOLEAN,
+	is_group_owner    BOOLEAN,
+	is_group_admin    BOOLEAN,
+	valid_from        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to          TIMESTAMPTZ,
+	valid_id          UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT member_pk  PRIMARY KEY (id),
+	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id),
+	CONSTRAINT fk_chat    FOREIGN KEY (chat_id) REFERENCES cu.chat (id)
+);
+
+CREATE UNIQUE INDEX member_ux
+ON cu.member (account_id, chat_id)
+WHERE valid_to IS NULL;
+
+CREATE UNIQUE INDEX member_ux_group_owner
+ON cu.member (chat_id, is_group_owner)
+WHERE valid_to IS NULL;
 
 CREATE TYPE cu.attach_kind AS ENUM (
 	'account_picture',

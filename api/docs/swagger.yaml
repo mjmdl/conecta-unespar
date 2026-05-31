@@ -29,9 +29,48 @@ definitions:
       name:
         type: string
     type: object
+  main.UpdateDirectChatDto:
+    properties:
+      doBlock:
+        type: boolean
+      doFriend:
+        type: boolean
+      doMute:
+        type: boolean
+      doPin:
+        type: boolean
+      otherAccountId:
+        type: string
+    required:
+    - otherAccountId
+    type: object
+  main.UpdateDirectChatResultDto:
+    properties:
+      chatId:
+        type: string
+    type: object
 info:
   contact: {}
 paths:
+  /direct-chat:
+    put:
+      parameters:
+      - description: Direct chat options.
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.UpdateDirectChatDto'
+      responses:
+        "201":
+          description: Direct chat created.
+          schema:
+            $ref: '#/definitions/main.UpdateDirectChatResultDto'
+        "204":
+          description: Changes applied to direct chat.
+      summary: Update direct chat with another user.
+      tags:
+      - Chat
   /login:
     post:
       description: Generates the access-token cookie.
@@ -46,12 +85,16 @@ paths:
         "204":
           description: No Content
       summary: Authenticate
+      tags:
+      - User
   /logout:
     post:
       responses:
         "204":
           description: No Content
       summary: Commit unalive
+      tags:
+      - User
   /logup:
     post:
       parameters:
@@ -65,6 +108,8 @@ paths:
         "204":
           description: No Content
       summary: Create account
+      tags:
+      - User
   /me:
     get:
       responses:
@@ -73,17 +118,23 @@ paths:
           schema:
             $ref: '#/definitions/main.ProfileResultDto'
       summary: See current user
+      tags:
+      - User
   /profile-picture:
     delete:
       responses:
         "204":
           description: No Content
       summary: Remove profile picture
+      tags:
+      - User
     get:
       responses:
         "200":
           description: OK
       summary: Retrieve profile picture
+      tags:
+      - User
     put:
       consumes:
       - multipart/form-data
@@ -97,6 +148,8 @@ paths:
         "204":
           description: No Content
       summary: Update profile picture
+      tags:
+      - User
 securityDefinitions:
   CookieAuth:
     in: cookie

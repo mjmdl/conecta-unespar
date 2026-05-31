@@ -15,9 +15,42 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/direct-chat": {
+            "put": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Update direct chat with another user.",
+                "parameters": [
+                    {
+                        "description": "Direct chat options.",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.UpdateDirectChatDto"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Direct chat created.",
+                        "schema": {
+                            "$ref": "#/definitions/main.UpdateDirectChatResultDto"
+                        }
+                    },
+                    "204": {
+                        "description": "Changes applied to direct chat."
+                    }
+                }
+            }
+        },
         "/login": {
             "post": {
                 "description": "Generates the access-token cookie.",
+                "tags": [
+                    "User"
+                ],
                 "summary": "Authenticate",
                 "parameters": [
                     {
@@ -39,6 +72,9 @@ const docTemplate = `{
         },
         "/logout": {
             "post": {
+                "tags": [
+                    "User"
+                ],
                 "summary": "Commit unalive",
                 "responses": {
                     "204": {
@@ -49,6 +85,9 @@ const docTemplate = `{
         },
         "/logup": {
             "post": {
+                "tags": [
+                    "User"
+                ],
                 "summary": "Create account",
                 "parameters": [
                     {
@@ -70,6 +109,9 @@ const docTemplate = `{
         },
         "/me": {
             "get": {
+                "tags": [
+                    "User"
+                ],
                 "summary": "See current user",
                 "responses": {
                     "200": {
@@ -83,6 +125,9 @@ const docTemplate = `{
         },
         "/profile-picture": {
             "get": {
+                "tags": [
+                    "User"
+                ],
                 "summary": "Retrieve profile picture",
                 "responses": {
                     "200": {
@@ -93,6 +138,9 @@ const docTemplate = `{
             "put": {
                 "consumes": [
                     "multipart/form-data"
+                ],
+                "tags": [
+                    "User"
                 ],
                 "summary": "Update profile picture",
                 "parameters": [
@@ -111,6 +159,9 @@ const docTemplate = `{
                 }
             },
             "delete": {
+                "tags": [
+                    "User"
+                ],
                 "summary": "Remove profile picture",
                 "responses": {
                     "204": {
@@ -162,6 +213,37 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.UpdateDirectChatDto": {
+            "type": "object",
+            "required": [
+                "otherAccountId"
+            ],
+            "properties": {
+                "doBlock": {
+                    "type": "boolean"
+                },
+                "doFriend": {
+                    "type": "boolean"
+                },
+                "doMute": {
+                    "type": "boolean"
+                },
+                "doPin": {
+                    "type": "boolean"
+                },
+                "otherAccountId": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.UpdateDirectChatResultDto": {
+            "type": "object",
+            "properties": {
+                "chatId": {
                     "type": "string"
                 }
             }
