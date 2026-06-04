@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS cu.attach (
 	id         UUID           NOT NULL DEFAULT cu.uuid_new(),
 	kind       cu.attach_kind NOT NULL,
 	account_id UUID,
+	chat_id    UUID,
 	post_id    UUID,
 	filename   TEXT NOT NULL,
 	content    BYTEA NOT NULL,
@@ -119,13 +120,33 @@ CREATE TABLE IF NOT EXISTS cu.attach (
 	deleted_at TIMESTAMPTZ,
 	CONSTRAINT attach_pk  PRIMARY KEY (id),
 	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id),
+	CONSTRAINT fk_chat    FOREIGN KEY (chat_id) REFERENCES cu.chat (id),
 	CONSTRAINT fk_post    FOREIGN KEY (post_id) REFERENCES cu.post (id)
 );
 
-CREATE UNIQUE INDEX attach_ux_accout_picture
+CREATE VIEW cu.debug_attach AS
+	SELECT
+		id,
+		kind,
+		account_id,
+		chat_id,
+		post_id,
+		filename,
+		created_at
+	FROM cu.attach
+	WHERE attach.deleted_at IS NULL
+	ORDER BY created_at DESC;
+
+CREATE UNIQUE INDEX attach_ux_account_picture
 ON cu.attach (account_id)
 WHERE
 	kind = 'account_picture'
+	AND deleted_at IS NULL;
+
+CREATE UNIQUE INDEX attach_ux_chat_picture
+ON cu.attach (chat_id)
+WHERE
+	kind = 'chat_picture'
 	AND deleted_at IS NULL;
 
 COMMIT;

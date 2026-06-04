@@ -15,6 +15,28 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/attach/{id}": {
+            "get": {
+                "tags": [
+                    "Attachments"
+                ],
+                "summary": "Retrieve attachment file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Attachment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
         "/direct-chat": {
             "put": {
                 "tags": [
@@ -174,17 +196,6 @@ const docTemplate = `{
             }
         },
         "/profile-picture": {
-            "get": {
-                "tags": [
-                    "User"
-                ],
-                "summary": "Retrieve profile picture",
-                "responses": {
-                    "200": {
-                        "description": "OK"
-                    }
-                }
-            },
             "put": {
                 "consumes": [
                     "multipart/form-data"
@@ -271,6 +282,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "pictureId": {
                     "type": "string"
                 }
             }

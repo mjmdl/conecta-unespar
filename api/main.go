@@ -68,9 +68,9 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Use(app.AuthMiddleware)
 			router.Post("/logout", app.PostLogout)
 			router.Get("/me", app.GetMe)
+			router.Get("/attach/{id}", app.GetAttach)
 			router.Put("/profile-picture", app.PutProfilePicture)
 			router.Delete("/profile-picture", app.DeleteProfilePicture)
-			router.Get("/profile-picture", app.GetProfilePicture)
 			router.Put("/direct-chat", app.PutDirectChat)
 			router.Post("/post", app.PostPost)
 		})
@@ -176,6 +176,32 @@ type userClaimsKey struct {}
 
 const accessTokenName = "access-token"
 
+const (
+	claimAccountId  = "sub"
+	claimSessionId  = "sid"
+	claimName       = "name"
+	claimExpiresAt  = "exp"
+)
+
+func getUserId(contex context.Context) (string, bool) {
+	claims, ok := contex.Value(userClaimsKey{}).(*jwt.MapClaims)
+	if !ok {
+		return "", false
+	}
+	
+	accountId, ok := (*claims)[claimAccountId].(string)
+	return accountId, ok
+}
+
+func getUserIdOrRespond(contex context.Context, writer http.ResponseWriter) (string, bool) {
+	if accountId, ok := getUserId(contex); ok {
+		return accountId, true
+	}
+
+	respondUnauthorized(writer)
+	return "", false
+}
+
 func respondJson(writer http.ResponseWriter, status int, data any) error {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
@@ -259,8 +285,7 @@ func (app *application) AuthMiddleware(next http.Handler) http.Handler {
 
 		const sqlCheckSession = `
 			SELECT EXISTS (
-				SELECT 1
-				FROM cu.session
+				SELECT 1 FROM cu.session
 				WHERE
 					session.id = $1::UUID
 					AND session.logout_at IS NULL
@@ -268,7 +293,7 @@ func (app *application) AuthMiddleware(next http.Handler) http.Handler {
 			);
 		`
 		
-		sessionId := (*claims)["sid"].(string)
+		sessionId := (*claims)[claimSessionId].(string)
 		var isValid bool
 		if err := app.Database.
 			QueryRow(request.Context(), sqlCheckSession, sessionId).
@@ -318,8 +343,7 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 
 	const sqlCheckUsernameAvailability = `
 		SELECT EXISTS (
-			SELECT 1
-			FROM cu.account
+			SELECT 1 FROM cu.account
 			WHERE
 				account.username ILIKE $1::TEXT
 				AND account.valid_to IS NULL
@@ -385,17 +409,21 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 
 	const sqlFindCredentials = `
 		SELECT
-			id,
-			name,
-			password
+			account.id,
+			account.name,
+			account.password
 		FROM cu.account
 		WHERE
 			account.username ILIKE $1::TEXT
 			AND account.valid_to IS NULL;
 	`
-	var accountId uuid.UUID
-	var name      string
-	var password  string
+	
+	var (
+		accountId uuid.UUID
+		name      string
+		password  string
+	)
+	
 	if err := transaction.
 		QueryRow(request.Context(), sqlFindCredentials, login.Username).
 		Scan(&accountId, &name, &password); err != nil {
@@ -429,10 +457,10 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 	}
 
 	claims := jwt.MapClaims{
-		"sub":  accountId,
-		"sid":  sessionId,
-		"name": name,
-		"exp":  expiresAt.Unix(),
+		claimAccountId: accountId,
+		claimSessionId: sessionId,
+		claimName:      name,
+		claimExpiresAt: expiresAt.Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signedToken, err := token.SignedString([]byte(app.Environment.AccessSecret))
@@ -458,7 +486,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 // @Router /logout [post]
 func (app *application) PostLogout(writer http.ResponseWriter, request *http.Request) {
 	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-	sessionId := (*claims)["sid"].(string)
+	sessionId := (*claims)[claimSessionId].(string)
 
 	const sqlLogout = `
 		UPDATE cu.session
@@ -481,8 +509,9 @@ func (app *application) PostLogout(writer http.ResponseWriter, request *http.Req
 }
 
 type ProfileResultDto struct {
-	Id   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
+	Id        string  `json:"id"`
+	Name      string  `json:"name"`
+	PictureId *string `json:"pictureId"`
 }
 
 // @Tags User
@@ -490,15 +519,48 @@ type ProfileResultDto struct {
 // @Success 200 {object} ProfileResultDto "Current user profile"
 // @Router /me [get]
 func (app *application) GetMe(writer http.ResponseWriter, request *http.Request) {
-	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	accountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
 
-	id, err := uuid.Parse((*claims)["sub"].(string))
-	if err != nil {
-		respondUnauthorized(writer)
+	const sqlGetMe = `
+		SELECT
+			account.name,
+			profile_picture.id
+		FROM
+			cu.account
+			LEFT JOIN LATERAL (
+				SELECT attach.id
+				FROM cu.attach
+				WHERE
+					attach.kind = 'account_picture'
+					AND attach.account_id = account.id
+					AND attach.deleted_at IS NULL
+				ORDER BY attach.created_at DESC
+				LIMIT 1
+			) AS profile_picture ON TRUE
+		WHERE account.id = $1::UUID
+	`
+
+	var (
+		name      string
+		pictureId *string
+	)
+	
+	if err := app.Database.
+		QueryRow(request.Context(), sqlGetMe, accountId).
+		Scan(&name, &pictureId); err != nil {
+
+		respondQueryFailed(writer, err, sqlGetMe)
 		return
 	}
 	
-	resultDto := ProfileResultDto{Id: id, Name: (*claims)["name"].(string)}
+	resultDto := ProfileResultDto{
+		Id: accountId,
+		Name: name,
+		PictureId: pictureId,
+	}
 	respondJson(writer, http.StatusOK, resultDto)
 }
 
@@ -510,7 +572,7 @@ func (app *application) GetMe(writer http.ResponseWriter, request *http.Request)
 // @Router /profile-picture [put]
 func (app *application) PutProfilePicture(writer http.ResponseWriter, request *http.Request) {
 	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-	accountId := (*claims)["sub"].(string)
+	accountId := (*claims)[claimAccountId].(string)
 
 	transaction, ok := app.BeginTransaction(writer, request)
 	if !ok {
@@ -564,7 +626,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 // @Router /profile-picture [delete]
 func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request *http.Request) {
 	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-	accountId := (*claims)["sub"].(string)
+	accountId := (*claims)[claimAccountId].(string)
 
 	const sqlDeleteAttach = `
 		WITH soft_delete AS (
@@ -577,8 +639,7 @@ func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request
 			RETURNING id
 		)
 		SELECT EXISTS (
-			SELECT 1
-			FROM soft_delete
+			SELECT 1 FROM soft_delete
 		);
 	`
 	var pictureExists bool
@@ -598,36 +659,70 @@ func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request
 	writer.WriteHeader(http.StatusNoContent)
 }
 	
-// @Tags User
-// @Summary Retrieve profile picture
+// @Tags Attachments
+// @Summary Retrieve attachment file
+// @Param id path string true "Attachment ID"
 // @Success 200
-// @Router /profile-picture [get]
-func (app *application) GetProfilePicture(writer http.ResponseWriter, request *http.Request) {
-	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-	accountId := (*claims)["sub"].(string)
+// @Router /attach/{id} [get]
+func (app *application) GetAttach(writer http.ResponseWriter, request *http.Request) {
+	accountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	attachId  := chi.URLParam(request, "id")
 
-	const sqlFindProfilePicture = `
+	const sqlGetAttach = `
+		WITH
+		params AS (
+			SELECT
+				$1::UUID AS attach_id,
+				$2::UUID AS account_id
+		)
 		SELECT
 			attach.filename,
 			attach.content
 		FROM cu.attach
+		INNER JOIN params ON params.attach_id = attach.id
 		WHERE
-			attach.account_id = $1::UUID
-			AND attach.kind = 'account_picture'
-			AND attach.deleted_at IS NULL
+			attach.deleted_at IS NULL
+			AND
+				CASE attach.kind
+					WHEN 'account_picture' THEN TRUE
+					WHEN 'chat_picture' THEN EXISTS (
+						SELECT 1 FROM cu.member
+						WHERE
+							member.account_id = params.account_id
+							AND member.chat_id = attach.chat_id
+							AND member.valid_to IS NULL
+					)
+					WHEN 'post_file' THEN EXISTS (
+						SELECT 1 FROM cu.member
+						JOIN cu.post
+							ON post.id = attach.post_id
+							AND post.valid_to IS NULL
+						JOIN cu.member AS poster
+							ON poster.id = post.member_id
+							AND poster.chat_id = member.chat_id
+							AND poster.valid_to IS NULL
+						WHERE
+							member.account_id = params.account_id
+							AND member.valid_to IS NULL
+					)
+				END;
 	`
 	
 	var filename string
 	var data     []byte
 	if err := app.Database.
-		QueryRow(request.Context(), sqlFindProfilePicture, accountId).
+		QueryRow(request.Context(), sqlGetAttach, attachId, accountId).
 		Scan(&filename, &data); err != nil {
 
 		if err == pgx.ErrNoRows {
 			respondNotFound(writer)
 		} else {
-			respondQueryFailed(writer, err, sqlFindProfilePicture)
+			respondQueryFailed(writer, err, sqlGetAttach)
 		}
+		
 		return
 	}
 
@@ -657,7 +752,7 @@ type UpdateDirectChatResultDto struct {
 // @Router /direct-chat [put]
 func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.Request) {
 	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-	userAccountId := (*claims)["sub"].(string)
+	userAccountId := (*claims)[claimAccountId].(string)
 
 	var chat UpdateDirectChatDto
 	if err := app.ParseAndValidateRequestBody(request, &chat); err != nil {
@@ -849,7 +944,7 @@ type CreatePostResultDto struct {
 // @Router /post [post]
 func (app *application) PostPost(writer http.ResponseWriter, request *http.Request) {
 	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
-	userAccountId := (*claims)["sub"].(string)
+	userAccountId := (*claims)[claimAccountId].(string)
 
 	const formCapacity = 1024 * 1024 * 32 // 32 MB
 	const maxFileSize  = 1024 * 1024 * 10 // 10 MB
@@ -934,8 +1029,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 				ON replied_post.id = params.replied_to_id
 				AND replied_post.valid_to IS NULL
 				AND EXISTS (
-					SELECT 1
-					FROM cu.member
+					SELECT 1 FROM cu.member
 					WHERE
 						member.id = replied_post.member_id
 						AND member.chat_id = chat.id
