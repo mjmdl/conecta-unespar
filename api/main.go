@@ -146,8 +146,14 @@ type environmentVariables struct {
 }
 
 func getEnvironmentVariables() environmentVariables {
-	if err := godotenv.Load("../.env"); err != nil {
-		log.Fatal(err);
+	var serverPortName string
+	if os.Getenv("RAILWAY_ENVIRONMENT") == ""  {
+		if err := godotenv.Load("../.env"); err != nil {
+			log.Fatal(err);
+		}
+		serverPortName = "SERVER_PORT"
+	} else {
+		serverPortName = "PORT"
 	}
 
 	environment := requireEnvironmentVariable("ENVIRONMENT")
@@ -157,7 +163,7 @@ func getEnvironmentVariables() environmentVariables {
 	
 	return environmentVariables{
 		IsDevelopment: environment == "development",
-		ServerPort:    requireEnvironmentVariable("SERVER_PORT"),
+		ServerPort:    requireEnvironmentVariable(serverPortName),
 		DatabaseUrl:   requireEnvironmentVariable("DATABASE_URL"),
 		AccessSecret:  requireEnvironmentVariable("ACCESS_SECRET"),
 	}
