@@ -123,6 +123,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/post": {
+            "post": {
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Send a post in the chat.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat Id",
+                        "name": "chatId",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Reply to Post ID",
+                        "name": "replyToId",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Message",
+                        "name": "message",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "file"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Attachments (multiple files)",
+                        "name": "attach",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The post is posted.",
+                        "schema": {
+                            "$ref": "#/definitions/main.CreatePostResultDto"
+                        }
+                    }
+                }
+            }
+        },
         "/profile-picture": {
             "get": {
                 "tags": [
@@ -172,6 +222,14 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "main.CreatePostResultDto": {
+            "type": "object",
+            "properties": {
+                "postId": {
+                    "type": "string"
+                }
+            }
+        },
         "main.LoginDto": {
             "type": "object",
             "required": [

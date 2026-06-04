@@ -89,6 +89,19 @@ CREATE UNIQUE INDEX member_ux_group_owner
 ON cu.member (chat_id, is_group_owner)
 WHERE valid_to IS NULL;
 
+CREATE TABLE cu.post (
+	id          UUID NOT NULL DEFAULT cu.uuid_new(),
+	member_id   UUID,
+	reply_to_id UUID,
+	message     TEXT,
+	valid_from  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to    TIMESTAMPTZ,
+	valid_id    UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT post_pk     PRIMARY KEY (id),
+	CONSTRAINT fk_member   FOREIGN KEY (member_id) REFERENCES cu.member (id),
+	CONSTRAINT fk_reply_to FOREIGN KEY (reply_to_id) REFERENCES cu.post (id)
+);
+
 CREATE TYPE cu.attach_kind AS ENUM (
 	'account_picture',
 	'chat_picture',
@@ -99,12 +112,14 @@ CREATE TABLE IF NOT EXISTS cu.attach (
 	id         UUID           NOT NULL DEFAULT cu.uuid_new(),
 	kind       cu.attach_kind NOT NULL,
 	account_id UUID,
+	post_id    UUID,
 	filename   TEXT NOT NULL,
 	content    BYTEA NOT NULL,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 	deleted_at TIMESTAMPTZ,
 	CONSTRAINT attach_pk  PRIMARY KEY (id),
-	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id)
+	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id),
+	CONSTRAINT fk_post    FOREIGN KEY (post_id) REFERENCES cu.post (id)
 );
 
 CREATE UNIQUE INDEX attach_ux_accout_picture

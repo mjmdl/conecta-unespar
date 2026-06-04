@@ -1,4 +1,9 @@
 definitions:
+  main.CreatePostResultDto:
+    properties:
+      postId:
+        type: string
+    type: object
   main.LoginDto:
     properties:
       password:
@@ -120,6 +125,39 @@ paths:
       summary: See current user
       tags:
       - User
+  /post:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Chat Id
+        in: formData
+        name: chatId
+        required: true
+        type: string
+      - description: Reply to Post ID
+        in: formData
+        name: replyToId
+        type: string
+      - description: Message
+        in: formData
+        name: message
+        type: string
+      - collectionFormat: csv
+        description: Attachments (multiple files)
+        in: formData
+        items:
+          type: file
+        name: attach
+        type: array
+      responses:
+        "201":
+          description: The post is posted.
+          schema:
+            $ref: '#/definitions/main.CreatePostResultDto'
+      summary: Send a post in the chat.
+      tags:
+      - Chat
   /profile-picture:
     delete:
       responses:

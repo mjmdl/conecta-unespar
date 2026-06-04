@@ -72,6 +72,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Delete("/profile-picture", app.DeleteProfilePicture)
 			router.Get("/profile-picture", app.GetProfilePicture)
 			router.Put("/direct-chat", app.PutDirectChat)
+			router.Post("/post", app.PostPost)
 		})
 	})
 }
@@ -84,6 +85,23 @@ func (app *application) ParseAndValidateRequestBody(request *http.Request, into 
 		return err
 	}
 	return nil
+}
+
+func (app *application) BeginTransaction(writer http.ResponseWriter, request *http.Request) (transaction pgx.Tx, ok bool) {
+	transaction, err := app.Database.Begin(request.Context())
+	if err != nil {
+		respondInternalServerError(writer, err, "failed to begin a transaction")
+		return nil, false
+	}
+	return transaction, true
+}
+
+func (app *application) CommitTransaction(writer http.ResponseWriter, request *http.Request, transaction pgx.Tx) bool {
+	if err := transaction.Commit(request.Context()); err != nil {
+		respondInternalServerError(writer, err, "failed to commit transaction")
+		return false
+	}
+	return true
 }
 
 /*
@@ -176,12 +194,24 @@ func respondNotFound(writer http.ResponseWriter) {
 	http.Error(writer, "not found", http.StatusNotFound)
 }
 
+func respondNotFoundWhat(writer http.ResponseWriter, what string) {
+	http.Error(writer, "not found: " + what, http.StatusNotFound)
+}
+
 func respondConflict(writer http.ResponseWriter, message string) {
 	http.Error(writer, "conflict: " + message, http.StatusConflict)
 }
 
 func respondUnauthorized(writer http.ResponseWriter) {
 	http.Error(writer, "unauthorized", http.StatusUnauthorized)
+}
+
+func respondPayloadTooLarge(writer http.ResponseWriter) {
+	http.Error(writer, "payload too large", http.StatusRequestEntityTooLarge)
+}
+
+func respondTooManyRequests(writer http.ResponseWriter) {
+	http.Error(writer, "too many requests", http.StatusTooManyRequests)
 }
 
 func respondInternalServerError(writer http.ResponseWriter, err error, description string, args ...any) {
@@ -191,6 +221,14 @@ func respondInternalServerError(writer http.ResponseWriter, err error, descripti
 
 func respondQueryFailed(writer http.ResponseWriter, err error, query string) {
 	respondInternalServerError(writer, err, "query failed", query)
+}
+
+func nilIfEmptyString(value string) *string {
+	if value != "" {
+		return &value
+	} else {
+		return nil
+	}
 }
 
 /*
@@ -272,10 +310,9 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	transaction, err := app.Database.Begin(request.Context())
-	if err != nil {
-		respondInternalServerError(writer, err, "failed to begin a transaction")
-		return;
+	transaction, ok := app.BeginTransaction(writer, request)
+	if !ok {
+		return
 	}
 	defer transaction.Rollback(request.Context())
 
@@ -316,8 +353,7 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	if err := transaction.Commit(request.Context()); err != nil {
-		respondInternalServerError(writer, err, "failed to commit transaction")
+	if !app.CommitTransaction(writer, request, transaction) {
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
@@ -341,9 +377,8 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	transaction, err := app.Database.Begin(request.Context())
-	if err != nil {
-		respondInternalServerError(writer, err, "failed to begin a transaction")
+	transaction, ok := app.BeginTransaction(writer, request)
+	if !ok {
 		return;
 	}
 	defer transaction.Rollback(request.Context())
@@ -388,8 +423,8 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 		respondQueryFailed(writer, err, sqlCreateSession)
 		return
 	}
-	if err := transaction.Commit(request.Context()); err != nil {
-		respondInternalServerError(writer, err, "failed to commit transaction")
+
+	if !app.CommitTransaction(writer, request, transaction) {
 		return
 	}
 
@@ -477,9 +512,8 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
 	accountId := (*claims)["sub"].(string)
 
-	transaction, err := app.Database.Begin(request.Context())
-	if err != nil {
-		respondInternalServerError(writer, err, "failed to begin a transaction")
+	transaction, ok := app.BeginTransaction(writer, request)
+	if !ok {
 		return;
 	}
 	defer transaction.Rollback(request.Context())
@@ -517,10 +551,10 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 		return
 	}
 
-	if err := transaction.Commit(request.Context()); err != nil {
-		respondInternalServerError(writer, err, "failed to commit transaction")
+	if !app.CommitTransaction(writer, request, transaction) {
 		return
 	}
+	
 	writer.WriteHeader(http.StatusNoContent)
 }
 
@@ -631,9 +665,8 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	transaction, err := app.Database.Begin(request.Context())
-	if err != nil {
-		respondInternalServerError(writer, err, "failed to begin a transaction")
+	transaction, ok := app.BeginTransaction(writer, request)
+	if !ok {
 		return;
 	}
 	defer transaction.Rollback(request.Context())
@@ -677,7 +710,7 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		isUsersBlock  bool
 		isHisBlock    bool
 	)
-	err = transaction.
+	err := transaction.
 		QueryRow(request.Context(), sqlFindChat, userAccountId, chat.OtherAccountId).
 		Scan(&chatId, &isUsersPin, &isUsersFriend, &isHisFriend, &isUsersMute, &isUsersBlock, &isHisBlock)
 	if err == nil {
@@ -798,8 +831,206 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		return
 	}
 	
-	if err := transaction.Commit(request.Context()); err != nil {
-		respondInternalServerError(writer, err, "failed to commit transaction")
+	app.CommitTransaction(writer, request, transaction)
+}
+
+type CreatePostResultDto struct {
+	PostId uuid.UUID `json:"postId"`
+}
+
+// @Tags Chat
+// @Summary Send a post in the chat.
+// @Accept multipart/form-data
+// @Param chatId formData string true "Chat Id"
+// @Param replyToId formData string false "Reply to Post ID"
+// @Param message formData string false "Message"
+// @Param attach formData []file false "Attachments (multiple files)"
+// @Success 201 {object} CreatePostResultDto "The post is posted."
+// @Router /post [post]
+func (app *application) PostPost(writer http.ResponseWriter, request *http.Request) {
+	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	userAccountId := (*claims)["sub"].(string)
+
+	const formCapacity = 1024 * 1024 * 32 // 32 MB
+	const maxFileSize  = 1024 * 1024 * 10 // 10 MB
+	
+	if err := request.ParseMultipartForm(formCapacity); err != nil {
+		respondBadRequestError(writer, err)
 		return
 	}
+
+	chatId    := request.FormValue("chatId")
+	replyToId := nilIfEmptyString(request.FormValue("replyToId"))
+	message   := nilIfEmptyString(request.FormValue("message"))
+	files     := request.MultipartForm.File["attach"]
+
+	if message == nil && len(files) == 0 {
+		respondBadRequestMessage(writer, "please send a message or some files")
+		return
+	}
+	
+	filenames := make([]string, 0, len(files))
+	contents  := make([][]byte, 0, len(files))
+	for _, header := range files {
+		if header.Size > maxFileSize {
+			respondPayloadTooLarge(writer)
+			return
+		}
+		
+		file, err := header.Open()
+		if err != nil {
+			respondInternalServerError(writer, err, "failed to open file")
+			return
+		}
+
+		data, err := io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			respondInternalServerError(writer, err, "failed to read file")
+			return
+		}
+
+		filenames = append(filenames, header.Filename)
+		contents = append(contents, data)
+	}
+
+	transaction, ok := app.BeginTransaction(writer, request)
+	if !ok {
+		return
+	}
+	defer transaction.Rollback(request.Context())
+	
+	const sqlCheckChatState = `
+		WITH
+		params AS (
+			SELECT
+				$1::UUID AS chat_id,
+				$2::UUID AS account_id,
+				$3::UUID AS replied_to_id
+		)
+		SELECT
+			COALESCE(other_member.is_direct_blocked, FALSE),
+			COALESCE(last_post.valid_from, NOW() - INTERVAL'100 years'),
+			replied_post.id IS NOT NULL
+		FROM
+			cu.chat
+			CROSS JOIN params
+			INNER JOIN cu.member
+				ON member.account_id = params.account_id
+				AND member.chat_id = chat.id
+				AND member.valid_to IS NULL
+			LEFT JOIN cu.member AS other_member
+				ON chat.kind = 'direct'::cu.chat_Kind
+				AND other_member.chat_id = chat.id
+				AND other_member.valid_to IS NULL
+			LEFT JOIN LATERAL (
+				SELECT post.valid_from
+				FROM cu.post
+				WHERE post.member_id = member.id
+				ORDER BY post.valid_from DESC
+				LIMIT 1
+			) AS last_post ON TRUE
+			LEFT JOIN cu.post AS replied_post
+				ON replied_post.id = params.replied_to_id
+				AND replied_post.valid_to IS NULL
+				AND EXISTS (
+					SELECT 1
+					FROM cu.member
+					WHERE
+						member.id = replied_post.member_id
+						AND member.chat_id = chat.id
+						AND member.valid_to IS NULL
+					)
+		WHERE
+			chat.id = params.chat_id
+			AND chat.valid_to IS NULL;
+	`
+
+	var (
+		isBlocked         bool
+		lastPostTime      time.Time
+		repliedPostExists bool
+	)
+
+	err := transaction.
+		QueryRow(request.Context(), sqlCheckChatState, chatId, userAccountId, replyToId).
+		Scan(&isBlocked, &lastPostTime, &repliedPostExists)
+	if err == pgx.ErrNoRows {
+		respondNotFoundWhat(writer, "chat")
+		return
+	} else if err != nil {
+		respondQueryFailed(writer, err, sqlCheckChatState)
+		return
+	}
+
+	if isBlocked {
+		respondConflict(writer, "you've been blocked")
+		return
+	}
+	
+	if time.Since(lastPostTime) < 200 * time.Millisecond {
+		respondTooManyRequests(writer)
+		return
+	}
+
+	if replyToId != nil && !repliedPostExists {
+		respondNotFoundWhat(writer, "post")
+		return
+	}
+
+	const sqlPostPost = `
+		WITH
+		params AS (
+			SELECT
+				$1::UUID    AS account_id,
+				$2::TEXT    AS message,
+				$3::UUID    AS reply_to_id,
+				$4::TEXT[]  AS filenames,
+				$5::BYTEA[] AS contents
+		),
+		post AS MATERIALIZED (
+			INSERT INTO cu.post (member_id, reply_to_id, message)
+			SELECT
+				member.id,
+				params.reply_to_id,
+				params.message
+			FROM params
+			INNER JOIN cu.member
+				ON member.account_id = params.account_id
+				AND member.valid_to IS NULL
+			RETURNING post.id
+		),
+		attach AS MATERIALIZED (
+			INSERT INTO cu.attach (kind, post_id, filename, content)
+			SELECT
+				'post_file'::cu.attach_kind,
+				post.id,
+				filename.value,
+				content.value
+			FROM
+				params
+				CROSS JOIN post
+				CROSS JOIN UNNEST(params.filenames) WITH ORDINALITY AS filename (value, ord)
+				INNER JOIN UNNEST(params.contents)  WITH ORDINALITY AS content  (value, ord) USING (ord)
+			RETURNING attach.id
+		)
+		SELECT post.id
+		FROM post;
+	`
+
+	var postId uuid.UUID
+
+	if err = transaction.
+		QueryRow(request.Context(), sqlPostPost, userAccountId, message, replyToId, filenames, contents).
+		Scan(&postId); err != nil {
+
+		respondQueryFailed(writer, err, sqlPostPost)
+		return
+	}
+
+	if !app.CommitTransaction(writer, request, transaction) {
+		return
+	}
+
+	respondJson(writer, http.StatusCreated, CreatePostResultDto{PostId: postId})
 }
