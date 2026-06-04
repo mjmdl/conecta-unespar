@@ -58,11 +58,62 @@ const docTemplate = `{
                     "201": {
                         "description": "Direct chat created.",
                         "schema": {
-                            "$ref": "#/definitions/main.UpdateDirectChatResultDto"
+                            "$ref": "#/definitions/main.CreateChatResultDto"
                         }
                     },
                     "204": {
                         "description": "Changes applied to direct chat."
+                    }
+                }
+            }
+        },
+        "/group-chat": {
+            "post": {
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Create a group chat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The name of the group",
+                        "name": "name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The description of the group",
+                        "name": "description",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Account IDs of the members",
+                        "name": "accountIds",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Group picture",
+                        "name": "picture",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "The group is created.",
+                        "schema": {
+                            "$ref": "#/definitions/main.CreateChatResultDto"
+                        }
                     }
                 }
             }
@@ -151,7 +202,7 @@ const docTemplate = `{
                     "multipart/form-data"
                 ],
                 "tags": [
-                    "Chat"
+                    "Post"
                 ],
                 "summary": "Send a post in the chat.",
                 "parameters": [
@@ -233,6 +284,14 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "main.CreateChatResultDto": {
+            "type": "object",
+            "properties": {
+                "chatId": {
+                    "type": "string"
+                }
+            }
+        },
         "main.CreatePostResultDto": {
             "type": "object",
             "properties": {
@@ -308,14 +367,6 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "otherAccountId": {
-                    "type": "string"
-                }
-            }
-        },
-        "main.UpdateDirectChatResultDto": {
-            "type": "object",
-            "properties": {
-                "chatId": {
                     "type": "string"
                 }
             }

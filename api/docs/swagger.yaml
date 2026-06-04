@@ -1,4 +1,9 @@
 definitions:
+  main.CreateChatResultDto:
+    properties:
+      chatId:
+        type: string
+    type: object
   main.CreatePostResultDto:
     properties:
       postId:
@@ -51,11 +56,6 @@ definitions:
     required:
     - otherAccountId
     type: object
-  main.UpdateDirectChatResultDto:
-    properties:
-      chatId:
-        type: string
-    type: object
 info:
   contact: {}
 paths:
@@ -86,10 +86,44 @@ paths:
         "201":
           description: Direct chat created.
           schema:
-            $ref: '#/definitions/main.UpdateDirectChatResultDto'
+            $ref: '#/definitions/main.CreateChatResultDto'
         "204":
           description: Changes applied to direct chat.
       summary: Update direct chat with another user.
+      tags:
+      - Chat
+  /group-chat:
+    post:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: The name of the group
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: The description of the group
+        in: formData
+        name: description
+        type: string
+      - collectionFormat: csv
+        description: Account IDs of the members
+        in: formData
+        items:
+          type: string
+        name: accountIds
+        required: true
+        type: array
+      - description: Group picture
+        in: formData
+        name: picture
+        type: file
+      responses:
+        "201":
+          description: The group is created.
+          schema:
+            $ref: '#/definitions/main.CreateChatResultDto'
+      summary: Create a group chat
       tags:
       - Chat
   /login:
@@ -173,7 +207,7 @@ paths:
             $ref: '#/definitions/main.CreatePostResultDto'
       summary: Send a post in the chat.
       tags:
-      - Chat
+      - Post
   /profile-picture:
     delete:
       responses:

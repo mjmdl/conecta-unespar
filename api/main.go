@@ -72,6 +72,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Put("/profile-picture", app.PutProfilePicture)
 			router.Delete("/profile-picture", app.DeleteProfilePicture)
 			router.Put("/direct-chat", app.PutDirectChat)
+			router.Post("/group-chat", app.PostGroupChat)
 			router.Post("/post", app.PostPost)
 		})
 	})
@@ -87,18 +88,18 @@ func (app *application) ParseAndValidateRequestBody(request *http.Request, into 
 	return nil
 }
 
-func (app *application) BeginTransaction(writer http.ResponseWriter, request *http.Request) (transaction pgx.Tx, ok bool) {
-	transaction, err := app.Database.Begin(request.Context())
+func (app *application) BeginTransa(writer http.ResponseWriter, request *http.Request) (transa pgx.Tx, ok bool) {
+	transa, err := app.Database.Begin(request.Context())
 	if err != nil {
-		respondInternalServerError(writer, err, "failed to begin a transaction")
+		respondInternalServerError(writer, err, "failed to begin a transa")
 		return nil, false
 	}
-	return transaction, true
+	return transa, true
 }
 
-func (app *application) CommitTransaction(writer http.ResponseWriter, request *http.Request, transaction pgx.Tx) bool {
-	if err := transaction.Commit(request.Context()); err != nil {
-		respondInternalServerError(writer, err, "failed to commit transaction")
+func (app *application) CommitTransa(writer http.ResponseWriter, request *http.Request, transa pgx.Tx) bool {
+	if err := transa.Commit(request.Context()); err != nil {
+		respondInternalServerError(writer, err, "failed to commit transa")
 		return false
 	}
 	return true
@@ -335,11 +336,11 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	transaction, ok := app.BeginTransaction(writer, request)
+	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
 		return
 	}
-	defer transaction.Rollback(request.Context())
+	defer transa.Rollback(request.Context())
 
 	const sqlCheckUsernameAvailability = `
 		SELECT EXISTS (
@@ -350,7 +351,7 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		);
 	`
 	var usernameIsTaken bool
-	if err := transaction.
+	if err := transa.
 		QueryRow(request.Context(), sqlCheckUsernameAvailability, logup.Username).
 		Scan(&usernameIsTaken); err != nil {
 
@@ -372,12 +373,12 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		INSERT INTO cu.account (name, username, password)
 		VALUES ($1::TEXT, LOWER($2::TEXT), $3::TEXT);
 	`
-	if _, err := transaction.Exec(request.Context(), sqlInsertAccount, logup.Name, logup.Username, passwordHash); err != nil {
+	if _, err := transa.Exec(request.Context(), sqlInsertAccount, logup.Name, logup.Username, passwordHash); err != nil {
 		respondQueryFailed(writer, err, sqlInsertAccount)
 		return
 	}
 
-	if !app.CommitTransaction(writer, request, transaction) {
+	if !app.CommitTransa(writer, request, transa) {
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
@@ -401,11 +402,11 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	transaction, ok := app.BeginTransaction(writer, request)
+	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
 		return;
 	}
-	defer transaction.Rollback(request.Context())
+	defer transa.Rollback(request.Context())
 
 	const sqlFindCredentials = `
 		SELECT
@@ -424,7 +425,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 		password  string
 	)
 	
-	if err := transaction.
+	if err := transa.
 		QueryRow(request.Context(), sqlFindCredentials, login.Username).
 		Scan(&accountId, &name, &password); err != nil {
 
@@ -444,7 +445,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 	`
 	var sessionId uuid.UUID
 	expiresAt := time.Now().Add(time.Hour * 24)
-	if err := transaction.
+	if err := transa.
 		QueryRow(request.Context(), sqlCreateSession, accountId, expiresAt).
 		Scan(&sessionId); err != nil {
 		
@@ -452,7 +453,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	if !app.CommitTransaction(writer, request, transaction) {
+	if !app.CommitTransa(writer, request, transa) {
 		return
 	}
 
@@ -574,11 +575,11 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
 	accountId := (*claims)[claimAccountId].(string)
 
-	transaction, ok := app.BeginTransaction(writer, request)
+	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
 		return;
 	}
-	defer transaction.Rollback(request.Context())
+	defer transa.Rollback(request.Context())
 
 	file, header, err := request.FormFile("picture")
 	if err != nil {
@@ -587,6 +588,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 	}
 	
 	data, err := io.ReadAll(file)
+	file.Close()
 	if err != nil {
 		respondBadRequestMessage(writer, "invalid file")
 		return
@@ -599,7 +601,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 			account_id = $1
 			AND deleted_at IS NULL;
 	`
-	if _, err := transaction.Exec(request.Context(), sqlDeleteAttach, accountId); err != nil {
+	if _, err := transa.Exec(request.Context(), sqlDeleteAttach, accountId); err != nil {
 		respondQueryFailed(writer, err, sqlDeleteAttach)
 		return
 	}
@@ -608,12 +610,12 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 		INSERT INTO cu.attach (kind, account_id, filename, content)
 		VALUES ('account_picture', $1::UUID, $2::TEXT, $3::BYTEA)
 	`
-	if _, err := transaction.Exec(request.Context(), sqlInsertAttach, accountId, header.Filename, data); err != nil {
+	if _, err := transa.Exec(request.Context(), sqlInsertAttach, accountId, header.Filename, data); err != nil {
 		respondQueryFailed(writer, err, sqlInsertAttach)
 		return
 	}
 
-	if !app.CommitTransaction(writer, request, transaction) {
+	if !app.CommitTransa(writer, request, transa) {
 		return
 	}
 	
@@ -740,7 +742,7 @@ type UpdateDirectChatDto struct {
 	DoBlock        *bool     `json:"doBlock,omitempty"`
 }
 
-type UpdateDirectChatResultDto struct {
+type CreateChatResultDto struct {
 	ChatId uuid.UUID `json:"chatId"`
 }
 
@@ -748,7 +750,7 @@ type UpdateDirectChatResultDto struct {
 // @Summary Update direct chat with another user.
 // @Param body body UpdateDirectChatDto true "Direct chat options."
 // @Success 204 "Changes applied to direct chat."
-// @Success 201 {object} UpdateDirectChatResultDto "Direct chat created."
+// @Success 201 {object} CreateChatResultDto "Direct chat created."
 // @Router /direct-chat [put]
 func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.Request) {
 	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
@@ -760,11 +762,11 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	transaction, ok := app.BeginTransaction(writer, request)
+	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
 		return;
 	}
-	defer transaction.Rollback(request.Context())
+	defer transa.Rollback(request.Context())
 	
 	const sqlFindChat = `
 		WITH params AS (
@@ -805,7 +807,7 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		isUsersBlock  bool
 		isHisBlock    bool
 	)
-	err := transaction.
+	err := transa.
 		QueryRow(request.Context(), sqlFindChat, userAccountId, chat.OtherAccountId).
 		Scan(&chatId, &isUsersPin, &isUsersFriend, &isHisFriend, &isUsersMute, &isUsersBlock, &isHisBlock)
 	if err == nil {
@@ -850,7 +852,7 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 				AND member.chat_id = params.chat_id
 				AND member.valid_to IS NULL;
 		`
-		if _, err := transaction.Exec(request.Context(), sqlUpdateChat, chatId, userAccountId, chat.DoPin, chat.DoMute, chat.DoFriend, chat.DoBlock); err != nil {
+		if _, err := transa.Exec(request.Context(), sqlUpdateChat, chatId, userAccountId, chat.DoPin, chat.DoMute, chat.DoFriend, chat.DoBlock); err != nil {
 			respondQueryFailed(writer, err, sqlUpdateChat)
 			return
 		}
@@ -910,30 +912,198 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 				chat,
 				members;
 		`
+		
 		var chatId uuid.UUID
-		if err := transaction.
+		
+		if err := transa.
 			QueryRow(request.Context(), sqlCreateChat, userAccountId, chat.OtherAccountId, chat.DoPin, chat.DoFriend, chat.DoMute, chat.DoBlock).
 			Scan(&chatId); err != nil {
 
-			respondQueryFailed(writer, err, sqlFindChat)
+			respondQueryFailed(writer, err, sqlCreateChat)
 			return
 		}
 
-		result := UpdateDirectChatResultDto{ChatId: chatId}
+		result := CreateChatResultDto{ChatId: chatId}
 		respondJson(writer, http.StatusCreated, result)
 	} else {
 		respondQueryFailed(writer, err, sqlFindChat)
 		return
 	}
 	
-	app.CommitTransaction(writer, request, transaction)
+	app.CommitTransa(writer, request, transa)
+}
+
+// @Tags Chat
+// @Summary Create a group chat
+// @Accept multipart/form-data
+// @Param name formData string true "The name of the group"
+// @Param description formData string false "The description of the group"
+// @Param accountIds formData []string true "Account IDs of the members"
+// @Param picture formData file false "Group picture"
+// @Success 201 {object} CreateChatResultDto "The group is created."
+// @Router /group-chat [post]
+func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	_ = userAccountId
+
+	const formCapacity = 1024 * 1024 * 32 // 32 MB
+	const maxFileSize  = 1024 * 1024 * 10 // 10 MB
+	
+	if err := request.ParseMultipartForm(formCapacity); err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	name             := request.FormValue("name")
+	description      := nilIfEmptyString(request.FormValue("description"))
+	memberAccountIds := request.MultipartForm.Value["accountIds"]
+	picture, pictureHeader, err := request.FormFile("picture")
+	
+	if err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	var (
+		pictureData     []byte
+		pictureFilename *string
+	)
+	
+	if picture != nil && pictureHeader != nil {
+		defer picture.Close()
+		
+		if pictureHeader.Size >= maxFileSize {
+			respondPayloadTooLarge(writer)
+			return
+		}
+
+		pictureData, err = io.ReadAll(picture)
+		if err != nil {
+			respondBadRequestMessage(writer, "invalid file")
+			return
+		}
+
+		pictureFilename = &pictureHeader.Filename
+	}
+
+	transa, ok := app.BeginTransa(writer, request)
+	if !ok {
+		return
+	}
+	defer transa.Rollback(request.Context())
+	
+	const sqlCheckAccountsExist = `
+		SELECT COUNT(*) = CARDINALITY($1::UUID[])
+		FROM cu.account
+		WHERE
+			account.id = ANY($1::UUID[])
+			AND account.id <> $2::UUID
+			AND account.valid_to IS NULL
+	`
+
+	var membersExist bool
+	
+	if err := transa.
+		QueryRow(request.Context(), sqlCheckAccountsExist, memberAccountIds, userAccountId).
+		Scan(&membersExist); err != nil {
+
+		respondQueryFailed(writer, err, sqlCheckAccountsExist)
+		return
+	}
+
+	if !membersExist {
+		respondNotFound(writer)
+		return
+	}
+
+	const sqlCreateChat = `
+		WITH params AS (
+			SELECT
+				$1::UUID   AS user_account_id,
+				$2::UUID[] AS member_account_ids,
+				$3::TEXT   AS group_name,
+				$4::TEXT   AS group_description,
+				$5::TEXT   AS picture_filename,
+				$6::BYTEA  AS picture
+		),
+		chat AS MATERIALIZED (
+			INSERT INTO cu.chat (kind, name, description)
+			SELECT
+				'group'::cu.chat_kind,
+				params.group_name,
+				params.group_description
+			FROM params
+			RETURNING chat.id
+		),
+		attach AS MATERIALIZED (
+			INSERT INTO cu.attach (kind, chat_id, filename, content)
+			SELECT
+				'chat_picture',
+				chat.id,
+				params.picture_filename,
+				params.picture
+			FROM
+				chat,
+				params
+			WHERE params.picture IS NOT NULL
+		),
+		members AS MATERIALIZED (
+			INSERT INTO cu.member (
+				account_id,
+				chat_id,
+				is_group_admin,
+				is_group_owner
+			) (
+				SELECT
+					params.user_account_id,
+					chat.id,
+					TRUE,
+					TRUE
+				FROM
+					chat,
+					params
+				UNION ALL
+				SELECT
+					account_id,
+					chat.id,
+					FALSE,
+					FALSE
+				FROM
+					params,
+					UNNEST(params.member_account_ids) AS account_id,
+					chat
+			)
+			RETURNING member.id
+		)
+		SELECT chat.id
+		FROM chat;
+	`
+
+	var chatId uuid.UUID
+	
+	if err := transa.
+		QueryRow(request.Context(), sqlCreateChat, userAccountId, memberAccountIds, name, description, pictureFilename, pictureData).
+		Scan(&chatId); err != nil {
+
+		respondQueryFailed(writer, err, sqlCreateChat)
+		return
+	}
+
+	if !app.CommitTransa(writer, request, transa) {
+		return
+	}
+	
+	respondJson(writer, http.StatusCreated, CreateChatResultDto{ChatId: chatId})
 }
 
 type CreatePostResultDto struct {
 	PostId uuid.UUID `json:"postId"`
 }
 
-// @Tags Chat
+// @Tags Post
 // @Summary Send a post in the chat.
 // @Accept multipart/form-data
 // @Param chatId formData string true "Chat Id"
@@ -989,11 +1159,11 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 		contents = append(contents, data)
 	}
 
-	transaction, ok := app.BeginTransaction(writer, request)
+	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
 		return
 	}
-	defer transaction.Rollback(request.Context())
+	defer transa.Rollback(request.Context())
 	
 	const sqlCheckChatState = `
 		WITH
@@ -1046,7 +1216,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 		repliedPostExists bool
 	)
 
-	err := transaction.
+	err := transa.
 		QueryRow(request.Context(), sqlCheckChatState, chatId, userAccountId, replyToId).
 		Scan(&isBlocked, &lastPostTime, &repliedPostExists)
 	if err == pgx.ErrNoRows {
@@ -1114,7 +1284,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 
 	var postId uuid.UUID
 
-	if err = transaction.
+	if err = transa.
 		QueryRow(request.Context(), sqlPostPost, userAccountId, message, replyToId, filenames, contents).
 		Scan(&postId); err != nil {
 
@@ -1122,7 +1292,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
-	if !app.CommitTransaction(writer, request, transaction) {
+	if !app.CommitTransa(writer, request, transa) {
 		return
 	}
 
