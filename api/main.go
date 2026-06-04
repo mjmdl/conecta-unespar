@@ -1247,10 +1247,11 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 		params AS (
 			SELECT
 				$1::UUID    AS account_id,
-				$2::TEXT    AS message,
-				$3::UUID    AS reply_to_id,
-				$4::TEXT[]  AS filenames,
-				$5::BYTEA[] AS contents
+				$2::UUID    AS chat_id,
+				$3::TEXT    AS message,
+				$4::UUID    AS reply_to_id,
+				$5::TEXT[]  AS filenames,
+				$6::BYTEA[] AS contents
 		),
 		post AS MATERIALIZED (
 			INSERT INTO cu.post (member_id, reply_to_id, message)
@@ -1261,6 +1262,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 			FROM params
 			INNER JOIN cu.member
 				ON member.account_id = params.account_id
+				AND member.chat_id = params.chat_id
 				AND member.valid_to IS NULL
 			RETURNING post.id
 		),
@@ -1285,7 +1287,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 	var postId uuid.UUID
 
 	if err = transa.
-		QueryRow(request.Context(), sqlPostPost, userAccountId, message, replyToId, filenames, contents).
+		QueryRow(request.Context(), sqlPostPost, userAccountId, chatId, message, replyToId, filenames, contents).
 		Scan(&postId); err != nil {
 
 		respondQueryFailed(writer, err, sqlPostPost)
