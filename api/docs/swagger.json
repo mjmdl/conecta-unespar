@@ -26,6 +26,38 @@
                 }
             }
         },
+        "/chat": {
+            "get": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "List the current user chats",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of chats to skip.",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 9,
+                        "description": "Number of chats to take.",
+                        "name": "take",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Current user profile",
+                        "schema": {
+                            "$ref": "#/definitions/main.ChatsPageDto"
+                        }
+                    }
+                }
+            }
+        },
         "/direct-chat": {
             "put": {
                 "tags": [
@@ -273,6 +305,104 @@
         }
     },
     "definitions": {
+        "main.ChatsPageDto": {
+            "type": "object",
+            "properties": {
+                "chats": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "directInfo": {
+                                "description": "Present only for direct chats.",
+                                "type": "object",
+                                "properties": {
+                                    "himBlockedYou": {
+                                        "type": "boolean"
+                                    },
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "youBlockedHim": {
+                                        "type": "boolean"
+                                    }
+                                }
+                            },
+                            "groupInfo": {
+                                "description": "Present only for group chats.",
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "youAreAdmin": {
+                                        "type": "boolean"
+                                    },
+                                    "youAreOwner": {
+                                        "type": "boolean"
+                                    }
+                                }
+                            },
+                            "id": {
+                                "type": "string"
+                            },
+                            "isMuted": {
+                                "type": "boolean"
+                            },
+                            "isPinned": {
+                                "type": "boolean"
+                            },
+                            "lastPost": {
+                                "type": "object",
+                                "properties": {
+                                    "fileCount": {
+                                        "type": "integer"
+                                    },
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    },
+                                    "postedAt": {
+                                        "type": "string"
+                                    },
+                                    "poster": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {
+                                                "type": "string"
+                                            },
+                                            "name": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "pictureId": {
+                                "type": "string"
+                            },
+                            "validFrom": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "counted": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "taken": {
+                    "type": "integer"
+                }
+            }
+        },
         "main.CreateChatResultDto": {
             "type": "object",
             "properties": {

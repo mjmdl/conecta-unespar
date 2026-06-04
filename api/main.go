@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -73,6 +74,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Delete("/profile-picture", app.DeleteProfilePicture)
 			router.Put("/direct-chat", app.PutDirectChat)
 			router.Post("/group-chat", app.PostGroupChat)
+			router.Get("/chat", app.GetChats)
 			router.Post("/post", app.PostPost)
 		})
 	})
@@ -1057,24 +1059,24 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 				is_group_admin,
 				is_group_owner
 			) (
-				SELECT
-					params.user_account_id,
-					chat.id,
-					TRUE,
-					TRUE
-				FROM
-					chat,
-					params
+					SELECT
+						params.user_account_id,
+						chat.id,
+						TRUE,
+						TRUE
+					FROM
+						chat,
+						params
 				UNION ALL
-				SELECT
-					account_id,
-					chat.id,
-					FALSE,
-					FALSE
-				FROM
-					params,
-					UNNEST(params.member_account_ids) AS account_id,
-					chat
+					SELECT
+						account_id,
+						chat.id,
+						FALSE,
+						FALSE
+					FROM
+						params,
+						UNNEST(params.member_account_ids) AS account_id,
+						chat
 			)
 			RETURNING member.id
 		)
@@ -1097,6 +1099,289 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 	}
 	
 	respondJson(writer, http.StatusCreated, CreateChatResultDto{ChatId: chatId})
+}
+
+type ChatsPageDto struct {
+	Skipped int `json:"skipped"`
+	Taken   int `json:"taken"`
+	Counted int `json:"counted"`
+
+	Chats []struct {
+		Id        uuid.UUID  `json:"id"`
+		PictureId *uuid.UUID `json:"pictureId"`
+		IsPinned  bool       `json:"isPinned"`
+		IsMuted   bool       `json:"isMuted"`
+		ValidFrom time.Time  `json:"validFrom"`
+
+		// Present only for direct chats.
+		DirectInfo *struct {
+			Id            uuid.UUID `json:"id"`
+			Name          string    `json:"name"`
+			YouBlockedHim bool      `json:"youBlockedHim"`
+			HimBlockedYou bool      `json:"himBlockedYou"`
+		}                         `json:"directInfo"`
+
+		// Present only for group chats.
+		GroupInfo *struct {
+			Name        string `json:"name"`
+			YouAreAdmin bool   `json:"youAreAdmin"`
+			YouAreOwner bool   `json:"youAreOwner"`
+		}                    `json:"groupInfo"`
+
+		LastPost *struct {
+			Id        uuid.UUID `json:"id"`
+			Message   *string   `json:"message"`
+			FileCount int       `json:"fileCount"`
+			PostedAt  time.Time `json:"postedAt"`
+			
+			Poster struct {
+				Id   uuid.UUID `json:"id"`
+				Name string    `json:"name"`
+			}                `json:"poster"`
+		}                  `json:"lastPost"`
+	} `json:"chats"`
+}
+
+// @Tags Chat
+// @Summary List the current user chats
+// @Param skip query int false "Number of chats to skip." default(0)
+// @Param take query int false "Number of chats to take." default(9)
+// @Success 200 {object} ChatsPageDto "Current user profile"
+// @Router /chat [get]
+func (app *application) GetChats(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+
+	var (
+		skip int = 0
+		take int = 9
+		err  error
+	)
+	
+	if value := request.URL.Query().Get("skip"); value != "" {
+		if skip, err = strconv.Atoi(value); err != nil {
+			respondBadRequestError(writer, err)
+			return
+		}
+	}
+	if value := request.URL.Query().Get("take"); value != "" {
+		if take, err = strconv.Atoi(value); err != nil {
+			respondBadRequestError(writer, err)
+			return
+		}
+	}
+
+	const sqlGetChats = `
+		WITH params AS (
+			SELECT
+				$1::UUID    AS account_id,
+				$2::INTEGER AS skip,
+				$3::INTEGER AS take
+		)
+		,
+		chat_info (
+			kind,
+			id, picture_id, is_pinned, is_muted, valid_from,
+			his_id, his_name, you_blocked_him, him_blocked_you,
+			group_name, you_are_admin, you_are_owner,
+			post_id, post_message, post_file_count, post_at,
+			poster_id, poster_name
+		) AS (
+				SELECT
+					'direct',
+					chat.id, his_picture.id, member.is_chat_pinned, member.is_chat_muted, chat.valid_from,
+					his_account.id, his_account.name, member.is_direct_blocked, his_member.is_direct_blocked,
+					NULL, NULL, NULL,
+					post.id, post.message, post.file_count, post.valid_from,
+					poster.id, poster.name
+				FROM
+					cu.chat
+					JOIN cu.member
+						ON member.chat_id = chat.id
+						AND member.valid_to IS NULL
+					JOIN params
+						ON params.account_id = member.account_id
+					JOIN cu.member AS his_member
+						ON his_member.chat_id = chat.id
+						AND his_member.valid_to IS NULL
+					JOIN cu.account AS his_account
+						ON his_account.id = his_member.account_id
+						AND his_account.valid_to IS NULL
+					LEFT JOIN LATERAL (
+						SELECT attach.id
+						FROM cu.attach
+						WHERE
+							attach.account_id = his_account.id
+							AND attach.kind = 'account_picture'
+							AND attach.deleted_at IS NULL
+						ORDER BY attach.created_at DESC
+						LIMIT 1
+					) AS his_picture ON TRUE
+					LEFT JOIN LATERAL (
+						SELECT
+							post.*,
+							COUNT(attach.id) AS file_count
+						FROM
+							cu.post
+							LEFT JOIN cu.attach
+								ON attach.kind = 'post_file'
+								AND attach.post_id = post.id
+								AND attach.deleted_at IS NULL
+						WHERE
+							post.member_id IN (member.id, his_member.id)
+							AND post.valid_to IS NULL
+						GROUP BY post.id
+						ORDER BY post.valid_from DESC
+						LIMIT 1
+					) AS post ON TRUE
+					LEFT JOIN LATERAL (
+							SELECT account.id, account.name
+							FROM cu.account
+							WHERE
+								post.member_id = member.id
+								AND account.id = member.account_id
+								AND account.valid_to IS NULL
+						UNION ALL
+							SELECT his_account.id, his_account.name
+							WHERE post.member_id = his_member.id
+					) AS poster ON TRUE
+				WHERE
+					chat.kind = 'direct'
+					AND chat.valid_to IS NULL
+			UNION ALL
+				SELECT
+					'group',
+					chat.id, chat_picture.id, member.is_chat_pinned, member.is_chat_muted, chat.valid_from,
+					NULL, NULL, NULL, NULL,
+					chat.name, member.is_group_admin, member.is_group_owner,
+					post.id, post.message, post.file_count, post.valid_from,
+					poster.id, poster.name
+				FROM
+					cu.chat
+					JOIN cu.member
+						ON member.chat_id = chat.id
+						AND member.valid_to IS NULL
+					JOIN params
+						ON params.account_id = member.account_id
+					LEFT JOIN LATERAL (
+						SELECT attach.id
+						FROM cu.attach
+						WHERE
+							attach.kind = 'chat_picture'
+							AND attach.chat_id = chat.id
+						ORDER BY attach.created_at
+						LIMIT 1
+					) AS chat_picture ON TRUE
+					LEFT JOIN LATERAL (
+						SELECT
+							post.*,
+							member.account_id AS poster_id,
+							COUNT(attach.id) AS file_count
+						FROM
+							cu.post
+							JOIN cu.member
+								ON member.id = post.member_id
+								AND member.chat_id = chat.id
+								AND member.valid_to IS NULL
+							LEFT JOIN cu.attach
+								ON attach.kind = 'post_file'
+								AND attach.post_id = post.id
+								AND attach.deleted_at IS NULL
+						WHERE post.valid_to IS NULL
+						GROUP BY
+							post.id,
+							member.id
+						ORDER BY post.valid_from DESC
+						LIMIT 1
+					) AS post ON TRUE
+					LEFT JOIN cu.account AS poster
+						ON poster.id = post.poster_id
+						AND poster.valid_to IS NULL
+				WHERE
+					chat.kind = 'group'
+					AND chat.valid_to IS NULL
+		)
+		,
+		chat AS (
+			SELECT
+				ROW_NUMBER() OVER (
+					ORDER BY
+						CASE WHEN chat.is_pinned THEN 1 ELSE 0 END DESC,
+						chat.post_at DESC,
+						chat.valid_from DESC
+				) AS index,
+				JSONB_BUILD_OBJECT(
+					'id',        chat.id,
+					'pictureId', chat.picture_id,
+					'isPinned',  chat.is_pinned,
+					'isMuted',   chat.is_muted,
+					'validFrom', chat.valid_from
+					,
+					'directInfo', CASE WHEN chat.kind = 'direct' THEN JSONB_BUILD_OBJECT(
+						'id',            chat.his_id,
+						'name',          chat.his_name,
+						'youBlockedHim', chat.you_blocked_him,
+						'himBlockedYou', chat.him_blocked_you
+					) END
+					,
+					'groupInfo', CASE WHEN chat.kind = 'group' THEN JSONB_BUILD_OBJECT(
+						'name',        chat.group_name,
+						'youAreAdmin', chat.you_are_admin,
+						'youAreOwner', chat.you_are_owner
+					) END
+					,
+					'lastPost', CASE WHEN chat.post_id IS NOT NULL THEN JSONB_BUILD_OBJECT(
+						'id',        chat.post_id,
+						'message',   chat.post_message,
+						'fileCount', chat.post_file_count,
+						'postedAt',  chat.post_at
+						,
+						'poster', JSONB_BUILD_OBJECT(
+							'id',   chat.poster_id,
+							'name', chat.poster_name
+						)
+					) END
+				) AS serial
+			FROM chat_info AS chat
+		)
+		SELECT
+			JSONB_BUILD_OBJECT(
+				'skipped', params.skip,
+				'taken',   params.take,
+				'counted', (SELECT COUNT(*) FROM chat)
+				,
+				'chats', COALESCE((
+					SELECT JSONB_AGG(
+						paging.serial
+						ORDER BY paging.index
+					)
+					FROM (
+						SELECT chat.*
+						FROM chat
+						ORDER BY chat.index
+						LIMIT (SELECT take FROM params)
+						OFFSET (SELECT skip FROM params)
+					) AS paging
+				), '[]'::JSONB)
+			)
+		FROM params
+	`
+
+	var result string
+
+	if err := app.Database.
+		QueryRow(request.Context(), sqlGetChats, userAccountId, skip, take).
+		Scan(&result); err != nil {
+
+		respondQueryFailed(writer, err, sqlGetChats)
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte(result))
 }
 
 type CreatePostResultDto struct {

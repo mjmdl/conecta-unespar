@@ -1,4 +1,68 @@
 definitions:
+  main.ChatsPageDto:
+    properties:
+      chats:
+        items:
+          properties:
+            directInfo:
+              description: Present only for direct chats.
+              properties:
+                himBlockedYou:
+                  type: boolean
+                id:
+                  type: string
+                name:
+                  type: string
+                youBlockedHim:
+                  type: boolean
+              type: object
+            groupInfo:
+              description: Present only for group chats.
+              properties:
+                name:
+                  type: string
+                youAreAdmin:
+                  type: boolean
+                youAreOwner:
+                  type: boolean
+              type: object
+            id:
+              type: string
+            isMuted:
+              type: boolean
+            isPinned:
+              type: boolean
+            lastPost:
+              properties:
+                fileCount:
+                  type: integer
+                id:
+                  type: string
+                message:
+                  type: string
+                postedAt:
+                  type: string
+                poster:
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                  type: object
+              type: object
+            pictureId:
+              type: string
+            validFrom:
+              type: string
+          type: object
+        type: array
+      counted:
+        type: integer
+      skipped:
+        type: integer
+      taken:
+        type: integer
+    type: object
   main.CreateChatResultDto:
     properties:
       chatId:
@@ -73,6 +137,27 @@ paths:
       summary: Retrieve attachment file
       tags:
       - Attachments
+  /chat:
+    get:
+      parameters:
+      - default: 0
+        description: Number of chats to skip.
+        in: query
+        name: skip
+        type: integer
+      - default: 9
+        description: Number of chats to take.
+        in: query
+        name: take
+        type: integer
+      responses:
+        "200":
+          description: Current user profile
+          schema:
+            $ref: '#/definitions/main.ChatsPageDto'
+      summary: List the current user chats
+      tags:
+      - Chat
   /direct-chat:
     put:
       parameters:
