@@ -737,7 +737,7 @@ func (app *application) GetAttach(writer http.ResponseWriter, request *http.Requ
 	}
 
 	writer.Header().Set("Content-Disposition", `inline; filename="` + filename + `"`)
-	writer.Header().Set("Content-Type", "application/octet-stream")
+	writer.Header().Set("Content-Type", http.DetectContentType(data))
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(data)
 }
