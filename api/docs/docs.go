@@ -313,6 +313,44 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/user": {
+            "get": {
+                "tags": [
+                    "User"
+                ],
+                "summary": "List users",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of users to skip.",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 9,
+                        "description": "Number of users to take.",
+                        "name": "take",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Query by user name.",
+                        "name": "query",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Users",
+                        "schema": {
+                            "$ref": "#/definitions/main.UsersPageDto"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -498,6 +536,63 @@ const docTemplate = `{
                 },
                 "otherAccountId": {
                     "type": "string"
+                }
+            }
+        },
+        "main.UsersPageDto": {
+            "type": "object",
+            "properties": {
+                "counted": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "taken": {
+                    "type": "integer"
+                },
+                "users": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "directInfo": {
+                                "type": "object",
+                                "properties": {
+                                    "himBlockedYou": {
+                                        "type": "boolean"
+                                    },
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "isFriend": {
+                                        "type": "boolean"
+                                    },
+                                    "isMuted": {
+                                        "type": "boolean"
+                                    },
+                                    "isPinned": {
+                                        "type": "boolean"
+                                    },
+                                    "youBlockedHim": {
+                                        "type": "boolean"
+                                    }
+                                }
+                            },
+                            "id": {
+                                "type": "string"
+                            },
+                            "name": {
+                                "type": "string"
+                            },
+                            "pictureId": {
+                                "type": "string"
+                            },
+                            "username": {
+                                "type": "string"
+                            }
+                        }
+                    }
                 }
             }
         }

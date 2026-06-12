@@ -72,6 +72,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Get("/attach/{id}", app.GetAttach)
 			router.Put("/profile-picture", app.PutProfilePicture)
 			router.Delete("/profile-picture", app.DeleteProfilePicture)
+			router.Get("/user", app.GetUsers)
 			router.Put("/direct-chat", app.PutDirectChat)
 			router.Post("/group-chat", app.PostGroupChat)
 			router.Get("/chat", app.GetChats)
@@ -217,6 +218,12 @@ func respondJson(writer http.ResponseWriter, status int, data any) error {
 	return json.NewEncoder(writer).Encode(data)
 }
 
+func respondJsonBytes(writer http.ResponseWriter, status int, data []byte) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	writer.Write(data)
+}
+
 func respondBadRequestError(writer http.ResponseWriter, err error) {
 	respondBadRequestMessage(writer, err.Error())
 }
@@ -264,6 +271,28 @@ func nilIfEmptyString(value string) *string {
 	} else {
 		return nil
 	}
+}
+
+func getPaginationParameters(writer http.ResponseWriter, request *http.Request, defaultSkip int, defaultTake int) (skip int, take int, ok bool) {
+	skip = defaultSkip
+	take = defaultTake
+	var err error
+
+	if value := request.URL.Query().Get("skip"); value != "" {
+		if skip, err = strconv.Atoi(value); err != nil {
+			respondBadRequestError(writer, err)
+			return 0, 0, false
+		}
+	}
+	
+	if value := request.URL.Query().Get("take"); value != "" {
+		if take, err = strconv.Atoi(value); err != nil {
+			respondBadRequestError(writer, err)
+			return 0, 0, false
+		}
+	}
+
+	return skip, take, true
 }
 
 /*
@@ -742,6 +771,155 @@ func (app *application) GetAttach(writer http.ResponseWriter, request *http.Requ
 	writer.Write(data)
 }
 
+type UsersPageDto struct {
+	Skipped int `json:"skipped"`
+	Taken int `json:"taken"`
+	Counted int `json:"counted"`
+
+	Users []struct {
+		Id        uuid.UUID `json:"id"`
+		PictureId uuid.UUID `json:"pictureId"`
+		Name      string    `json:"name"`
+		Username  string    `json:"username"`
+
+		DirectInfo *struct {
+			Id            uuid.UUID `json:"id"`
+			IsPinned      bool      `json:"isPinned"`
+			IsMuted       bool      `json:"isMuted"`
+			IsFriend      bool      `json:"isFriend"`
+			YouBlockedHim bool      `json:"youBlockedHim"`
+			HimBlockedYou bool      `json:"himBlockedYou"`
+		}                         `json:"directInfo"`
+	} `json:"users"`
+}
+
+// @Tags User
+// @Summary List users
+// @Param skip query int false "Number of users to skip." default(0)
+// @Param take query int false "Number of users to take." default(9)
+// @Param query query string false "Query by user name."
+// @Success 200 {object} UsersPageDto "Users"
+// @Router /user [get]
+func (app *application) GetUsers(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+
+	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	if !ok {
+		return
+	}
+	query := request.URL.Query().Get("query")
+
+	const sqlGetUsers = `
+		WITH params AS (
+			SELECT
+				$1::UUID    AS account_id,
+				$2::INTEGER AS skip,
+				$3::INTEGER AS take,
+				ARRAY(
+					SELECT '%' || term || '%'
+					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($4::TEXT, ' ')) AS term
+					WHERE term <> ''
+				) AS terms
+		)
+		,
+		account AS (
+			SELECT
+				ROW_NUMBER() OVER (
+					ORDER BY
+						(
+							SELECT COUNT(1)
+							FROM
+								params,
+								UNNEST(params.terms) AS term
+							WHERE his_account.name     ILIKE term
+								OR  his_account.username ILIKE term
+						) DESC,
+						CASE WHEN chat.he_is_pinned THEN 1 ELSE 0 END DESC,
+						CASE WHEN chat.they_are_friends THEN 1 ELSE 0 END DESC
+				) AS index,
+				JSONB_BUILD_OBJECT(
+					'id',        his_account.id,
+					'pictureId', his_picture.id,
+					'name',      his_account.name,
+					'username',  his_account.username
+					,
+					'directInfo', chat.serial
+				) AS serial
+			FROM cu.account AS his_account
+			CROSS JOIN params
+			LEFT JOIN LATERAL (
+				SELECT attach.id
+				FROM cu.attach
+				WHERE attach.account_id = his_account.id
+					AND attach.kind = 'account_picture'
+					AND attach.deleted_at IS NULL
+				ORDER BY attach.created_at DESC
+				LIMIT 1
+			) AS his_picture ON TRUE
+			LEFT JOIN LATERAL (
+				SELECT
+					member.is_direct_friend AND his_member.is_direct_friend AS they_are_friends,
+					member.is_chat_pinned AS he_is_pinned,
+					JSONB_BUILD_OBJECT(
+						'id',            chat.id,
+						'isPinned',      member.is_chat_pinned,
+						'isMuted',       member.is_chat_muted,
+						'isFriend',      member.is_direct_friend AND his_member.is_direct_friend,
+						'youBlockedHim', member.is_direct_blocked,
+						'himBlockedYou', his_member.is_direct_blocked
+					) AS serial
+				FROM cu.chat
+				INNER JOIN cu.member
+					ON  member.chat_id = chat.id
+					AND member.account_id = params.account_id
+					AND member.valid_to IS NULL
+				INNER JOIN cu.member AS his_member
+					ON  his_member.chat_id = chat.id
+					AND his_member.account_id = his_account.id
+					AND his_member.valid_to IS NULL
+				WHERE chat.kind = 'direct'::cu.chat_kind
+					AND chat.valid_to IS NULL
+			) AS chat ON TRUE
+			WHERE
+				his_account.id != params.account_id
+				AND his_account.valid_to IS NULL
+		)
+		SELECT
+			JSONB_BUILD_OBJECT(
+				'skipped', params.skip,
+				'taken',   params.take,
+				'counted', (SELECT COUNT(*) FROM account)
+				,
+				'users', COALESCE((
+					SELECT JSONB_AGG(
+						paging.serial
+						ORDER BY paging.index
+					)
+					FROM (
+						SELECT account.*
+						FROM account
+						ORDER BY account.index
+						LIMIT (SELECT take FROM params)
+						OFFSET (SELECT skip FROM params)
+					) AS paging
+				), '[]'::JSONB)
+			)
+		FROM params
+	`
+
+	var result string
+
+	if err := app.Database.QueryRow(request.Context(), sqlGetUsers, userAccountId, skip, take, query).Scan(&result); err != nil {
+		respondQueryFailed(writer, err, sqlGetUsers)
+		return
+	}
+
+	respondJsonBytes(writer, http.StatusOK, []byte(result))
+}
+
 type UpdateDirectChatDto struct {
 	OtherAccountId uuid.UUID `json:"otherAccountId" validate:"required"`
 	DoPin          *bool     `json:"doPin,omitempty"`
@@ -1160,23 +1338,9 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
-	var (
-		skip int = 0
-		take int = 9
-		err  error
-	)
-	
-	if value := request.URL.Query().Get("skip"); value != "" {
-		if skip, err = strconv.Atoi(value); err != nil {
-			respondBadRequestError(writer, err)
-			return
-		}
-	}
-	if value := request.URL.Query().Get("take"); value != "" {
-		if take, err = strconv.Atoi(value); err != nil {
-			respondBadRequestError(writer, err)
-			return
-		}
+	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	if !ok {
+		return
 	}
 
 	const sqlGetChats = `
@@ -1385,9 +1549,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(http.StatusOK)
-	writer.Write([]byte(result))
+	respondJsonBytes(writer, http.StatusOK, []byte(result))
 }
 
 type CreatePostResultDto struct {
