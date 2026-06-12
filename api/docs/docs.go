@@ -278,6 +278,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/post/chat/{chat-id}": {
+            "get": {
+                "tags": [
+                    "Post"
+                ],
+                "summary": "List posts in a chat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat Id",
+                        "name": "chat-id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of posts to skip.",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 9,
+                        "description": "Number of posts to take.",
+                        "name": "take",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Query by post message.",
+                        "name": "query",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Page of posts",
+                        "schema": {
+                            "$ref": "#/definitions/main.PostsPageDto"
+                        }
+                    }
+                }
+            }
+        },
         "/profile-picture": {
             "put": {
                 "consumes": [
@@ -344,7 +389,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Users",
+                        "description": "Page of users",
                         "schema": {
                             "$ref": "#/definitions/main.UsersPageDto"
                         }
@@ -499,6 +544,95 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "main.PostsPageDto": {
+            "type": "object",
+            "properties": {
+                "counted": {
+                    "type": "integer"
+                },
+                "posts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "deletedAt": {
+                                "type": "string"
+                            },
+                            "id": {
+                                "type": "string"
+                            },
+                            "memberId": {
+                                "type": "string"
+                            },
+                            "payload": {
+                                "description": "The payload is null when deletedAt is not null.",
+                                "type": "object",
+                                "properties": {
+                                    "attachIds": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    },
+                                    "replyToId": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "reactions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "emoticon": {
+                                            "type": "string"
+                                        },
+                                        "memberIds": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "receipts": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {
+                                            "type": "string"
+                                        },
+                                        "memberId": {
+                                            "type": "string"
+                                        },
+                                        "receivedAt": {
+                                            "type": "string"
+                                        },
+                                        "viewedAt": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            },
+                            "sentAt": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "taken": {
+                    "type": "integer"
                 }
             }
         },

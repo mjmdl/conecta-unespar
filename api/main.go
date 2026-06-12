@@ -77,6 +77,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Post("/group-chat", app.PostGroupChat)
 			router.Get("/chat", app.GetChats)
 			router.Post("/post", app.PostPost)
+			router.Get("/post/chat/{chat-id}", app.GetChatPosts)
 		})
 	})
 }
@@ -773,7 +774,7 @@ func (app *application) GetAttach(writer http.ResponseWriter, request *http.Requ
 
 type UsersPageDto struct {
 	Skipped int `json:"skipped"`
-	Taken int `json:"taken"`
+	Taken   int `json:"taken"`
 	Counted int `json:"counted"`
 
 	Users []struct {
@@ -798,7 +799,7 @@ type UsersPageDto struct {
 // @Param skip query int false "Number of users to skip." default(0)
 // @Param take query int false "Number of users to take." default(9)
 // @Param query query string false "Query by user name."
-// @Success 200 {object} UsersPageDto "Users"
+// @Success 200 {object} UsersPageDto "Page of users"
 // @Router /user [get]
 func (app *application) GetUsers(writer http.ResponseWriter, request *http.Request) {
 	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
@@ -1752,4 +1753,205 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 	}
 
 	respondJson(writer, http.StatusCreated, CreatePostResultDto{PostId: postId})
+}
+
+type PostsPageDto struct {
+	Skipped int `json:"skipped"`
+	Taken   int `json:"taken"`
+	Counted int `json:"counted"`
+
+	Posts []struct {
+		Id        uuid.UUID   `json:"id"`
+		MemberId  uuid.UUID   `json:"memberId"`
+		SentAt    time.Time   `json:"sentAt"`
+		DeletedAt time.Time   `json:"deletedAt"`
+
+		// The payload is null when deletedAt is not null.
+		Payload *struct {
+			ReplyToId uuid.UUID   `json:"replyToId"`
+			Message   *string     `json:"message"`
+			AttachIds []uuid.UUID `json:"attachIds"`
+		} `json:"payload"`
+
+		Receipts []struct {
+			Id         uuid.UUID  `json:"id"`
+			MemberId   uuid.UUID  `json:"memberId"`
+			ReceivedAt time.Time  `json:"receivedAt"`
+			ViewedAt   *time.Time `json:"viewedAt"`
+		}                       `json:"receipts"`
+
+		Reactions []struct {
+			Emoticon  string      `json:"emoticon"`
+			MemberIds []uuid.UUID `json:"memberIds"`
+		}                       `json:"reactions"`
+	} `json:"posts"`
+}
+
+// @Tags Post
+// @Summary List posts in a chat
+// @Param chat-id path string true "Chat Id"
+// @Param skip query int false "Number of posts to skip." default(0)
+// @Param take query int false "Number of posts to take." default(9)
+// @Param query query string false "Query by post message."
+// @Success 200 {object} PostsPageDto "Page of posts"
+// @Router /post/chat/{chat-id} [get]
+func (app *application) GetChatPosts(writer http.ResponseWriter, request *http.Request) {
+	chatId := chi.URLParam(request, "chat-id")
+	
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+
+	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	if !ok {
+		return
+	}
+	query := request.URL.Query().Get("query")
+
+	const sqlGetPosts = `
+		WITH params AS (
+			SELECT
+				$1::UUID    AS account_id,
+				$2::INTEGER AS skip,
+				$3::INTEGER AS take,
+				ARRAY(
+					SELECT '%' || term || '%'
+					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($4::TEXT, ' ')) AS term
+					WHERE term <> ''
+				) AS terms,
+				$5::UUID AS chat_id
+		)
+		,
+		post AS (
+			SELECT
+				ROW_NUMBER() OVER (
+					ORDER BY
+						(
+							SELECT COUNT(1)
+							FROM
+								params,
+								UNNEST(params.terms) AS term
+							WHERE post.message ILIKE term
+								AND post.valid_to IS NULL
+						) DESC,
+						post.valid_from DESC
+				) AS index,
+				JSONB_BUILD_OBJECT(
+					'id', post.id,
+					'memberId', post.member_id,
+					'sentAt', post.valid_from,
+					'deletedAt', post.valid_to
+					,
+					'payload', CASE WHEN post.valid_to IS NULL THEN JSONB_BUILD_OBJECT(
+						'replyToId', post.reply_to_id,
+						'message',   post.message,
+						'attachIds', attachs.serial
+					) END
+					,
+					'receipts', COALESCE(receipts.serial, '[]'::JSONB)
+					,
+					'reactions', COALESCE(reactions.serial, '[]'::JSONB)
+				) AS serial
+			FROM cu.post
+			CROSS JOIN params
+			INNER JOIN cu.chat
+				ON chat.id = params.chat_id
+				AND EXISTS (
+					SELECT 1
+					FROM cu.member
+					WHERE
+						member.chat_id = chat.id
+						AND member.id = post.member_id
+				)
+				AND EXISTS (
+					SELECT 1
+					FROM cu.member
+					WHERE
+						member.chat_id = chat.id
+						AND member.account_id = params.account_id
+				)
+				AND chat.valid_to IS NULL
+			LEFT JOIN LATERAL (
+				SELECT
+					JSONB_AGG(
+						JSONB_BUILD_OBJECT(
+							'id', receipt.id,
+							'memberId', receipt.member_id,
+							'receivedAt', receipt.received_at,
+							'viewedAt', receipt.viewed_at
+						)
+						ORDER BY receipt.received_at DESC
+					) AS serial
+				FROM cu.receipt
+				WHERE
+					receipt.post_id = post.id
+					AND NOT EXISTS (
+						SELECT 1
+						FROM cu.member
+						WHERE member.id = receipt.member_id
+							AND member.account_id = params.account_id
+					)
+			) AS receipts ON TRUE
+			LEFT JOIN LATERAL (
+				SELECT
+					JSONB_AGG(
+						JSONB_BUILD_OBJECT(
+							'emoticon',  receipt.reaction,
+							'memberIds', receipt.member_ids
+						)
+					) AS serial
+				FROM (
+					SELECT
+						reaction,
+						JSONB_AGG(receipt.member_id) AS member_ids
+					FROM
+						cu.receipt,
+						UNNEST(receipt.reactions) AS reaction
+					WHERE
+						receipt.post_id = post.id
+						AND reaction IS NOT NULL
+					GROUP BY reaction
+				) AS receipt
+			) AS reactions ON TRUE
+			LEFT JOIN LATERAL (
+				SELECT JSONB_AGG(attach.id) AS serial
+				FROM cu.attach
+				WHERE
+					attach.post_id = post.id
+					AND attach.kind = 'post_file'::cu.attach_kind
+					AND attach.deleted_at IS NULL
+			) AS attachs ON TRUE
+		)
+		SELECT
+			JSONB_BUILD_OBJECT(
+				'skipped', params.skip,
+				'taken',   params.take,
+				'counted', (SELECT COUNT(*) FROM post)
+				,
+				'posts', COALESCE((
+					SELECT JSONB_AGG(
+						paging.serial
+						ORDER BY paging.index
+					)
+					FROM (
+						SELECT post.*
+						FROM post
+						ORDER BY post.index
+						LIMIT (SELECT take FROM params)
+						OFFSET (SELECT skip FROM params)
+					) AS paging
+				), '[]'::JSONB)
+			)
+		FROM params
+	`
+
+	var result string
+
+	if err := app.Database.QueryRow(request.Context(), sqlGetPosts, userAccountId, skip, take, query, chatId).Scan(&result); err != nil {
+		respondQueryFailed(writer, err, sqlGetPosts)
+		return
+	}
+
+	respondJsonBytes(writer, http.StatusOK, []byte(result))
 }

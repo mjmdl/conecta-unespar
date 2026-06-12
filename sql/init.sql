@@ -102,6 +102,19 @@ CREATE TABLE cu.post (
 	CONSTRAINT fk_reply_to FOREIGN KEY (reply_to_id) REFERENCES cu.post (id)
 );
 
+CREATE TABLE cu.receipt (
+	id          UUID NOT NULL DEFAULT cu.uuid_new(),
+	member_id   UUID NOT NULL,
+	post_id     UUID NOT NULL,
+	received_at TIMESTAMPTZ,
+	viewed_at   TIMESTAMPTZ,
+	reactions   TEXT[],
+	CONSTRAINT receipt_pk PRIMARY KEY (id),
+	CONSTRAINT fk_member  FOREIGN KEY (member_id) REFERENCES cu.member (id),
+	CONSTRAINT fk_post    FOREIGN KEY (post_id) REFERENCES cu.post (id),
+	CONSTRAINT uq         UNIQUE (member_id, post_id)
+);
+
 CREATE TYPE cu.attach_kind AS ENUM (
 	'account_picture',
 	'chat_picture',
