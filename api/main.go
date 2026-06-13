@@ -1376,6 +1376,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 						ON params.account_id = member.account_id
 					JOIN cu.member AS his_member
 						ON his_member.chat_id = chat.id
+						AND his_member.id <> member.id
 						AND his_member.valid_to IS NULL
 					JOIN cu.account AS his_account
 						ON his_account.id = his_member.account_id
