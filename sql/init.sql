@@ -13,6 +13,41 @@ AS $$
     SELECT ext.uuid_generate_v4();
 $$;
 
+CREATE TYPE cu.course_modality AS ENUM (
+	'bachelor',
+	'teaching',
+	'teaching_2',
+	'technology'
+);
+
+CREATE TABLE IF NOT EXISTS cu.course (
+	id         UUID NOT NULL DEFAULT cu.uuid_new(),
+	name       TEXT NOT NULL,
+	modality   cu.course_modality NOT NULL,
+	valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to   TIMESTAMPTZ,
+	valid_id   UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT course_pk PRIMARY KEY (id),
+	CONSTRAINT ck_valid  CHECK (valid_from < valid_to)
+);
+
+CREATE UNIQUE INDEX course_ux
+ON cu.course (name, modality)
+WHERE valid_to IS NULL;
+
+CREATE UNIQUE INDEX course_ux_valid
+ON cu.course (valid_id)
+WHERE valid_to IS NULL;
+
+INSERT INTO cu.course (name, modality)
+VALUES
+	('Administração', 'bachelor'),
+	('Educação Especial Inclusiva', 'teaching_2'),
+	('Letras - Inglês', 'teaching'),
+	('Matemática', 'teaching'),
+	('Sistemas de Informação', 'bachelor'),
+	('Turismo e Negócio', 'bachelor');
+
 CREATE TABLE IF NOT EXISTS cu.account (
 	id         UUID NOT NULL DEFAULT cu.uuid_new(),
 	name       TEXT NOT NULL,

@@ -63,6 +63,7 @@ func (app *application) setupRoutes(router chi.Router) {
 		if app.Environment.IsDevelopment {
 			router.Get("/swagger/*", swagger.WrapHandler)
 		}
+		router.Get("/course", app.GetCourses)
 		router.Post("/logup", app.PostLogup)
 		router.Post("/login", app.PostLogin)
 		router.Group(func(router chi.Router) {
@@ -356,6 +357,104 @@ func (app *application) AuthMiddleware(next http.Handler) http.Handler {
 /*
  * Endpoints
  */
+
+type CoursesPageDto struct {
+	Skipped int `json:"skipped"`
+	Taken   int `json:"taken"`
+	Counted int `json:"counted"`
+
+	Courses []struct {
+		Id        uuid.UUID `json:"id"`
+		Name      string    `json:"name"`
+		// Either one of those: bachelor, teaching, teaching_2, technology.
+		Modality  string    `json:"modality"`
+		ValidFrom time.Time `json:"validFrom"`
+	}                     `json:"courses"`
+}
+
+// @Tags Course
+// @Summary List the courses
+//        name   source  datatype  required  description                   properties
+// @Param skip   query   int       false     "Number of courses to skip."  default(0)
+// @Param take   query   int       false     "Number of courses to take."  default(9)
+// @Param query  query   string    false     "Query by course name."
+// @Success 200 {object} CoursesPageDto "Courses page"
+// @Router /course [get]
+func (app *application) GetCourses(writer http.ResponseWriter, request *http.Request) {
+	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	if !ok {
+		return
+	}
+	query := request.URL.Query().Get("query")
+
+	const sqlGetCourses = `
+		WITH params AS (
+			SELECT
+				$1::INTEGER AS skip,
+				$2::INTEGER AS take,
+				ARRAY(
+					SELECT '%' || term || '%'
+					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($3::TEXT, ' ')) AS term
+					WHERE term <> ''
+				) AS terms
+		)
+		,
+		course AS (
+			SELECT
+				ROW_NUMBER() OVER (
+					ORDER BY
+						(
+							SELECT COUNT(1)
+							FROM
+								params,
+								UNNEST(params.terms) AS term
+							WHERE course.name ILIKE term
+						) DESC,
+						course.name ASC
+				) AS index,
+				JSONB_BUILD_OBJECT(
+					'id',        course.id,
+					'name',      course.name,
+					'validFrom', course.valid_from
+				) AS serial
+			FROM cu.course
+			WHERE course.valid_to IS NULL
+		)
+		SELECT
+			JSONB_BUILD_OBJECT(
+				'skipped', params.skip,
+				'taken',   params.take,
+				'counted', (SELECT COUNT(*) FROM course)
+				,
+				'courses', COALESCE((
+					SELECT JSONB_AGG(
+						paging.serial
+						ORDER BY paging.index
+					)
+					FROM (
+						SELECT course.*
+						FROM course
+						ORDER BY course.index
+						LIMIT (SELECT take FROM params)
+						OFFSET (SELECT skip FROM params)
+					) AS paging
+				), '[]'::JSONB)
+			)
+		FROM params
+	`
+
+	var result string
+
+	if err := app.Database.
+		QueryRow(request.Context(), sqlGetCourses, skip, take, query).
+		Scan(&result); err != nil {
+
+		respondQueryFailed(writer, err, sqlGetCourses)
+		return
+	}
+
+	respondJsonBytes(writer, http.StatusOK, []byte(result))
+}
 
 type LogupDto struct {
 	Name     string `json:"name" validate:"required,accountName"`

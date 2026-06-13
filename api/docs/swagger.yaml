@@ -63,6 +63,29 @@ definitions:
       taken:
         type: integer
     type: object
+  main.CoursesPageDto:
+    properties:
+      counted:
+        type: integer
+      courses:
+        items:
+          properties:
+            id:
+              type: string
+            modality:
+              description: 'Either one of those: bachelor, teaching, teaching_2, technology.'
+              type: string
+            name:
+              type: string
+            validFrom:
+              type: string
+          type: object
+        type: array
+      skipped:
+        type: integer
+      taken:
+        type: integer
+    type: object
   main.CreateChatResultDto:
     properties:
       chatId:
@@ -288,6 +311,31 @@ paths:
       summary: List the current user chats
       tags:
       - Chat
+  /course:
+    get:
+      parameters:
+      - default: 0
+        description: Number of courses to skip.
+        in: query
+        name: skip
+        type: integer
+      - default: 9
+        description: Number of courses to take.
+        in: query
+        name: take
+        type: integer
+      - description: Query by course name.
+        in: query
+        name: query
+        type: string
+      responses:
+        "200":
+          description: Courses page
+          schema:
+            $ref: '#/definitions/main.CoursesPageDto'
+      summary: List the courses
+      tags:
+      - Course
   /direct-chat:
     put:
       parameters:

@@ -58,6 +58,44 @@
                 }
             }
         },
+        "/course": {
+            "get": {
+                "tags": [
+                    "Course"
+                ],
+                "summary": "List the courses",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of courses to skip.",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 9,
+                        "description": "Number of courses to take.",
+                        "name": "take",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Query by course name.",
+                        "name": "query",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Courses page",
+                        "schema": {
+                            "$ref": "#/definitions/main.CoursesPageDto"
+                        }
+                    }
+                }
+            }
+        },
         "/direct-chat": {
             "put": {
                 "tags": [
@@ -522,6 +560,41 @@
                 },
                 "counted": {
                     "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "taken": {
+                    "type": "integer"
+                }
+            }
+        },
+        "main.CoursesPageDto": {
+            "type": "object",
+            "properties": {
+                "counted": {
+                    "type": "integer"
+                },
+                "courses": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "modality": {
+                                "description": "Either one of those: bachelor, teaching, teaching_2, technology.",
+                                "type": "string"
+                            },
+                            "name": {
+                                "type": "string"
+                            },
+                            "validFrom": {
+                                "type": "string"
+                            }
+                        }
+                    }
                 },
                 "skipped": {
                     "type": "integer"
