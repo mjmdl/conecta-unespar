@@ -96,6 +96,41 @@ definitions:
     - password
     - username
     type: object
+  main.MembersPageDto:
+    properties:
+      counted:
+        type: integer
+      members:
+        items:
+          properties:
+            account:
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                pictureId:
+                  type: string
+              type: object
+            addedAt:
+              type: string
+            id:
+              type: string
+            isAdmin:
+              type: boolean
+            isOwner:
+              type: boolean
+            lastPostAt:
+              type: string
+            removedAt:
+              type: string
+          type: object
+        type: array
+      skipped:
+        type: integer
+      taken:
+        type: integer
+    type: object
   main.PostsPageDto:
     properties:
       counted:
@@ -355,6 +390,36 @@ paths:
       summary: See current user
       tags:
       - User
+  /member/chat/{chat-id}:
+    get:
+      parameters:
+      - description: Chat ID
+        in: path
+        name: chat-id
+        required: true
+        type: string
+      - default: 0
+        description: Number of members to skip.
+        in: query
+        name: skip
+        type: integer
+      - default: 9
+        description: Number of members to take.
+        in: query
+        name: take
+        type: integer
+      - description: Query by member name.
+        in: query
+        name: query
+        type: string
+      responses:
+        "200":
+          description: Page of members
+          schema:
+            $ref: '#/definitions/main.MembersPageDto'
+      summary: List members in a chat
+      tags:
+      - Member
   /post:
     post:
       consumes:

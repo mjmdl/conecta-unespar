@@ -78,6 +78,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Get("/chat", app.GetChats)
 			router.Post("/post", app.PostPost)
 			router.Get("/post/chat/{chat-id}", app.GetChatPosts)
+			router.Get("/member/chat/{chat-id}", app.GetChatMembers)
 		})
 	})
 }
@@ -1839,9 +1840,9 @@ func (app *application) GetChatPosts(writer http.ResponseWriter, request *http.R
 						post.valid_from DESC
 				) AS index,
 				JSONB_BUILD_OBJECT(
-					'id', post.id,
-					'memberId', post.member_id,
-					'sentAt', post.valid_from,
+					'id',        post.id,
+					'memberId',  post.member_id,
+					'sentAt',    post.valid_from,
 					'deletedAt', post.valid_to
 					,
 					'payload', CASE WHEN post.valid_to IS NULL THEN JSONB_BUILD_OBJECT(
@@ -1951,6 +1952,158 @@ func (app *application) GetChatPosts(writer http.ResponseWriter, request *http.R
 
 	if err := app.Database.QueryRow(request.Context(), sqlGetPosts, userAccountId, skip, take, query, chatId).Scan(&result); err != nil {
 		respondQueryFailed(writer, err, sqlGetPosts)
+		return
+	}
+
+	respondJsonBytes(writer, http.StatusOK, []byte(result))
+}
+
+type MembersPageDto struct {
+	Skipped int `json:"skipped"`
+	Taken   int `json:"taken"`
+	Counted int `json:"counted"`
+
+	Members []struct {
+		Id         uuid.UUID  `json:"id"`
+		IsAdmin    bool       `json:"isAdmin"`
+		IsOwner    bool       `json:"isOwner"`
+		AddedAt    time.Time  `json:"addedAt"`
+		RemovedAt  time.Time  `json:"removedAt"`
+		LastPostAt *time.Time `json:"lastPostAt"`
+
+		Account struct {
+			Id        uuid.UUID  `json:"id"`
+			PictureId *uuid.UUID `json:"pictureId"`
+			Name      string     `json:"name"`
+		}                      `json:"account"`
+	} `json:"members"`
+}
+
+// @Tags Member
+// @Summary List members in a chat
+// @Param chat-id path string true "Chat ID"
+// @Param skip query int false "Number of members to skip." default(0)
+// @Param take query int false "Number of members to take." default(9)
+// @Param query query string false "Query by member name."
+// @Success 200 {object} MembersPageDto "Page of members"
+// @Router /member/chat/{chat-id} [get]
+func (app *application) GetChatMembers(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+
+	chatId := chi.URLParam(request, "chat-id")
+
+	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	if !ok {
+		return
+	}
+	query := request.URL.Query().Get("query")
+
+	const sqlGetMembers = `
+		WITH params AS (
+			SELECT
+				$1::UUID    AS account_id,
+				$2::INTEGER AS skip,
+				$3::INTEGER AS take,
+				ARRAY(
+					SELECT '%' || term || '%'
+					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($4::TEXT, ' ')) AS term
+					WHERE term <> ''
+				) AS terms,
+				$5::UUID AS chat_id
+		)
+		,
+		member AS (
+			SELECT
+				ROW_NUMBER() OVER (
+					ORDER BY
+						(
+							SELECT COUNT(1)
+							FROM
+								params,
+								UNNEST(params.terms) AS term
+							WHERE account.name ILIKE term
+						) DESC,
+						CASE
+							WHEN member.is_group_owner THEN 0
+							WHEN member.is_group_admin THEN 1
+							ELSE 2
+						END ASC,
+						account.name ASC
+				) AS index,
+				JSONB_BUILD_OBJECT(
+					'id',         member.id,
+					'isAdmin',    member.is_group_admin,
+					'isOwner',    member.is_group_owner,
+					'addedAt',    member.valid_from,
+					'removedAt',  member.valid_to,
+					'lastPostAt', last_post.valid_from
+					,
+					'account', JSONB_BUILD_OBJECT(
+						'id',        account.id,
+						'pictureId', picture.id,
+						'name',      account.name
+					)
+				) AS serial
+			FROM cu.chat
+			INNER JOIN params
+				ON params.chat_id = chat.id
+			INNER JOIN cu.member AS your_member
+				ON your_member.chat_id = chat.id
+				AND your_member.account_id = params.account_id
+				AND your_member.valid_to IS NULL
+			INNER JOIN cu.member
+				ON member.chat_id = chat.id
+				AND member.valid_to IS NULL
+			INNER JOIN cu.account
+				ON account.id = member.account_id
+				AND account.valid_to IS NULL
+			LEFT JOIN LATERAL (
+				SELECT attach.id
+				FROM cu.attach
+				WHERE
+					attach.account_id = account.id
+					AND attach.kind = 'account_picture'::cu.attach_kind
+					AND attach.deleted_at IS NULL
+			) AS picture ON TRUE
+			LEFT JOIN LATERAL(
+				SELECT post.valid_from
+				FROM cu.post
+				WHERE post.member_id = member.id
+				ORDER BY GREATEST(post.valid_from, post.valid_to) DESC
+				LIMIT 1
+			) AS last_post ON TRUE
+			WHERE chat.valid_to IS NULL
+		)
+		SELECT
+			JSONB_BUILD_OBJECT(
+				'skipped', params.skip,
+				'taken',   params.take,
+				'counted', (SELECT COUNT(*) FROM member)
+				,
+				'members', COALESCE((
+					SELECT JSONB_AGG(
+						paging.serial
+						ORDER BY paging.index
+					)
+					FROM (
+						SELECT member.*
+						FROM member
+						ORDER BY member.index
+						LIMIT (SELECT take FROM params)
+						OFFSET (SELECT skip FROM params)
+					) AS paging
+				), '[]'::JSONB)
+			)
+		FROM params
+	`
+
+	var result string
+
+	if err := app.Database.QueryRow(request.Context(), sqlGetMembers, userAccountId, skip, take, query, chatId).Scan(&result); err != nil {
+		respondQueryFailed(writer, err, sqlGetMembers)
 		return
 	}
 

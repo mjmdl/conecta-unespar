@@ -228,6 +228,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/member/chat/{chat-id}": {
+            "get": {
+                "tags": [
+                    "Member"
+                ],
+                "summary": "List members in a chat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID",
+                        "name": "chat-id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of members to skip.",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 9,
+                        "description": "Number of members to take.",
+                        "name": "take",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Query by member name.",
+                        "name": "query",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Page of members",
+                        "schema": {
+                            "$ref": "#/definitions/main.MembersPageDto"
+                        }
+                    }
+                }
+            }
+        },
         "/post": {
             "post": {
                 "consumes": [
@@ -544,6 +589,60 @@ const docTemplate = `{
                 },
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "main.MembersPageDto": {
+            "type": "object",
+            "properties": {
+                "counted": {
+                    "type": "integer"
+                },
+                "members": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "account": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "pictureId": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "addedAt": {
+                                "type": "string"
+                            },
+                            "id": {
+                                "type": "string"
+                            },
+                            "isAdmin": {
+                                "type": "boolean"
+                            },
+                            "isOwner": {
+                                "type": "boolean"
+                            },
+                            "lastPostAt": {
+                                "type": "string"
+                            },
+                            "removedAt": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "taken": {
+                    "type": "integer"
                 }
             }
         },
