@@ -63,6 +63,12 @@ const docTemplate = `{
                         "description": "Query by campus name.",
                         "name": "query",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by course offering.",
+                        "name": "course",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -132,6 +138,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Query by course name.",
                         "name": "query",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by campus offering.",
+                        "name": "campus",
                         "in": "query"
                     }
                 ],

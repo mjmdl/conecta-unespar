@@ -327,6 +327,10 @@ paths:
         in: query
         name: query
         type: string
+      - description: Filter by course offering.
+        in: query
+        name: course
+        type: string
       responses:
         "200":
           description: Campus page
@@ -372,6 +376,10 @@ paths:
       - description: Query by course name.
         in: query
         name: query
+        type: string
+      - description: Filter by campus offering.
+        in: query
+        name: campus
         type: string
       responses:
         "200":

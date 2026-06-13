@@ -299,6 +299,19 @@ func getPaginationParameters(writer http.ResponseWriter, request *http.Request, 
 	return skip, take, true
 }
 
+func toUUID(writer http.ResponseWriter, value string) (string, bool) {
+	if value == "" {
+		return value, true
+	}
+	_, err := uuid.Parse(value)
+	if err != nil {
+		respondBadRequestError(writer, err)
+		return "", false
+	} else {
+		return value, true
+	}
+}
+
 /*
  * Middlewares
  */
@@ -379,6 +392,7 @@ type CoursesPageDto struct {
 // @Param skip   query   int       false     "Number of courses to skip."  default(0)
 // @Param take   query   int       false     "Number of courses to take."  default(9)
 // @Param query  query   string    false     "Query by course name."
+// @Param campus query   string    false     "Filter by campus offering."
 // @Success 200 {object} CoursesPageDto "Courses page"
 // @Router /course [get]
 func (app *application) GetCourses(writer http.ResponseWriter, request *http.Request) {
@@ -387,6 +401,11 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	query := request.URL.Query().Get("query")
+	
+	campus, ok := toUUID(writer, request.URL.Query().Get("campus"))
+	if !ok {
+		return
+	}
 
 	const sqlGetCourses = `
 		WITH params AS (
@@ -397,7 +416,8 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 					SELECT '%' || term || '%'
 					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($3::TEXT, ' ')) AS term
 					WHERE term <> ''
-				) AS terms
+				) AS terms,
+				NULLIF($4, '')::UUID AS campus_id
 		)
 		,
 		course AS (
@@ -420,6 +440,15 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 					'validFrom', course.valid_from
 				) AS serial
 			FROM cu.course
+			INNER JOIN params
+				ON (params.campus_id IS NULL OR EXISTS (
+					SELECT 1
+					FROM cu.offering
+					WHERE
+						offering.course_id = course.id
+						AND offering.campus_id = params.campus_id
+						AND offering.valid_to IS NULL
+				))
 			WHERE course.valid_to IS NULL
 		)
 		SELECT
@@ -448,7 +477,7 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 	var result string
 
 	if err := app.Database.
-		QueryRow(request.Context(), sqlGetCourses, skip, take, query).
+		QueryRow(request.Context(), sqlGetCourses, skip, take, query, campus).
 		Scan(&result); err != nil {
 
 		respondQueryFailed(writer, err, sqlGetCourses)
@@ -472,10 +501,11 @@ type CampusPageDto struct {
 
 // @Tags Campus
 // @Summary List the campus
-//        name   source  datatype  required  description                   properties
-// @Param skip   query   int       false     "Number of campus to skip."  default(0)
-// @Param take   query   int       false     "Number of campus to take."  default(9)
-// @Param query  query   string    false     "Query by campus name."
+//        name    source  datatype  required  description                   properties
+// @Param skip    query   int       false     "Number of campus to skip."  default(0)
+// @Param take    query   int       false     "Number of campus to take."  default(9)
+// @Param query   query   string    false     "Query by campus name."
+// @Param course  query   string    false     "Filter by course offering."
 // @Success 200 {object} CampusPageDto "Campus page"
 // @Router /campus [get]
 func (app *application) GetCampus(writer http.ResponseWriter, request *http.Request) {
@@ -484,6 +514,11 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	query := request.URL.Query().Get("query")
+
+	course, ok := toUUID(writer, request.URL.Query().Get("campus"))
+	if !ok {
+		return
+	}
 
 	const sqlGetCampus = `
 		WITH params AS (
@@ -494,7 +529,8 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 					SELECT '%' || term || '%'
 					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($3::TEXT, ' ')) AS term
 					WHERE term <> ''
-				) AS terms
+				) AS terms,
+				NULLIF($4, '')::UUID AS course_id
 		)
 		,
 		campus AS (
@@ -516,6 +552,15 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 					'validFrom', campus.valid_from
 				) AS serial
 			FROM cu.campus
+			INNER JOIN params
+				ON (params.course_id IS NULL OR EXISTS (
+					SELECT 1
+					FROM cu.offering
+					WHERE
+						offering.campus_id = campus.id
+						AND offering.course_id = params.course_id
+						AND offering.valid_to IS NULL
+				))
 			WHERE campus.valid_to IS NULL
 		)
 		SELECT
@@ -544,7 +589,7 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 	var result string
 
 	if err := app.Database.
-		QueryRow(request.Context(), sqlGetCampus, skip, take, query).
+		QueryRow(request.Context(), sqlGetCampus, skip, take, query, course).
 		Scan(&result); err != nil {
 
 		respondQueryFailed(writer, err, sqlGetCampus)

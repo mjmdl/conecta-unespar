@@ -43,10 +43,9 @@ INSERT INTO cu.course (name, modality)
 VALUES
 	('Administração', 'bachelor'),
 	('Educação Especial Inclusiva', 'teaching_2'),
-	('Letras - Inglês', 'teaching'),
-	('Matemática', 'teaching'),
-	('Sistemas de Informação', 'bachelor'),
-	('Turismo e Negócio', 'bachelor');
+	('Música', 'teaching'),
+	('Gestão de Turismo', 'technology'),
+	('Sistemas de Informação', 'bachelor');
 
 CREATE TABLE IF NOT EXISTS cu.campus (
 	id         UUID NOT NULL DEFAULT cu.uuid_new(),
@@ -59,7 +58,7 @@ CREATE TABLE IF NOT EXISTS cu.campus (
 );
 
 CREATE UNIQUE INDEX campus_ux
-ON cu.campus (name, modality)
+ON cu.campus (name)
 WHERE valid_to IS NULL;
 
 CREATE UNIQUE INDEX campus_ux_valid
@@ -68,14 +67,55 @@ WHERE valid_to IS NULL;
 
 INSERT INTO cu.campus (name)
 VALUES
-	('Apucarana'),
-	('Campo Mourão'),
 	('Curitiba I'),
-	('Curitiba II'),
-	('Paranaguá'),
-	('Paranavaí'),
-	('União da Vitória'),
-	('Guatupê');
+	('União da Vitória');
+
+CREATE TABLE IF NOT EXISTS cu.offering (
+	id         UUID NOT NULL DEFAULT cu.uuid_new(),
+	campus_id  UUID NOT NULL,
+	course_id  UUID NOT NULL,
+	valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to   TIMESTAMPTZ,
+	valid_id   UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT oferring_pk PRIMARY KEY (id),
+	CONSTRAINT ck_valid  CHECK (valid_from < valid_to)
+);
+
+CREATE UNIQUE INDEX offering_ux
+ON cu.offering (campus_id, course_id)
+WHERE valid_to IS NULL;
+
+CREATE UNIQUE INDEX offering_ux_valid
+ON cu.offering (valid_id)
+WHERE valid_to IS NULL;
+
+DO LANGUAGE PLPGSQL
+$$
+DECLARE
+	-- campuses
+	_ctb UUID;
+	_uva UUID;
+	-- courses
+	_adm UUID;
+	_eei UUID;
+	_msc UUID;
+	_sdi UUID;
+BEGIN
+	SELECT id INTO _ctb FROM cu.campus WHERE LOWER(name) = 'curitiba i';
+	SELECT id INTO _uva FROM cu.campus WHERE LOWER(name) = 'união da vitória';
+	SELECT id INTO _adm FROM cu.course WHERE LOWER(name) = 'administração';
+	SELECT id INTO _eei FROM cu.course WHERE LOWER(name) = 'educação especial inclusiva';
+	SELECT id INTO _msc FROM cu.course WHERE LOWER(name) = 'música';
+	SELECT id INTO _sdi FROM cu.course WHERE LOWER(name) = 'sistemas de informação';
+
+	INSERT INTO cu.offering (campus_id, course_id)
+	VALUES
+		(_uva, _adm),
+		(_uva, _eei),
+		(_uva, _sdi),
+		(_ctb, _msc);
+END;
+$$;
 
 CREATE TABLE IF NOT EXISTS cu.account (
 	id         UUID NOT NULL DEFAULT cu.uuid_new(),
