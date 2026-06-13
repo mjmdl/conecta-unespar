@@ -64,6 +64,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Get("/swagger/*", swagger.WrapHandler)
 		}
 		router.Get("/course", app.GetCourses)
+		router.Get("/campus", app.GetCampus)
 		router.Post("/logup", app.PostLogup)
 		router.Post("/login", app.PostLogin)
 		router.Group(func(router chi.Router) {
@@ -415,6 +416,7 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 				JSONB_BUILD_OBJECT(
 					'id',        course.id,
 					'name',      course.name,
+					'modality',  course.modality,
 					'validFrom', course.valid_from
 				) AS serial
 			FROM cu.course
@@ -450,6 +452,102 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 		Scan(&result); err != nil {
 
 		respondQueryFailed(writer, err, sqlGetCourses)
+		return
+	}
+
+	respondJsonBytes(writer, http.StatusOK, []byte(result))
+}
+
+type CampusPageDto struct {
+	Skipped int `json:"skipped"`
+	Taken   int `json:"taken"`
+	Counted int `json:"counted"`
+
+	Courses []struct {
+		Id        uuid.UUID `json:"id"`
+		Name      string    `json:"name"`
+		ValidFrom time.Time `json:"validFrom"`
+	}                     `json:"campus"`
+}
+
+// @Tags Campus
+// @Summary List the campus
+//        name   source  datatype  required  description                   properties
+// @Param skip   query   int       false     "Number of campus to skip."  default(0)
+// @Param take   query   int       false     "Number of campus to take."  default(9)
+// @Param query  query   string    false     "Query by campus name."
+// @Success 200 {object} CampusPageDto "Campus page"
+// @Router /campus [get]
+func (app *application) GetCampus(writer http.ResponseWriter, request *http.Request) {
+	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	if !ok {
+		return
+	}
+	query := request.URL.Query().Get("query")
+
+	const sqlGetCampus = `
+		WITH params AS (
+			SELECT
+				$1::INTEGER AS skip,
+				$2::INTEGER AS take,
+				ARRAY(
+					SELECT '%' || term || '%'
+					FROM UNNEST(REGEXP_SPLIT_TO_ARRAY($3::TEXT, ' ')) AS term
+					WHERE term <> ''
+				) AS terms
+		)
+		,
+		campus AS (
+			SELECT
+				ROW_NUMBER() OVER (
+					ORDER BY
+						(
+							SELECT COUNT(1)
+							FROM
+								params,
+								UNNEST(params.terms) AS term
+							WHERE campus.name ILIKE term
+						) DESC,
+						campus.name ASC
+				) AS index,
+				JSONB_BUILD_OBJECT(
+					'id',        campus.id,
+					'name',      campus.name,
+					'validFrom', campus.valid_from
+				) AS serial
+			FROM cu.campus
+			WHERE campus.valid_to IS NULL
+		)
+		SELECT
+			JSONB_BUILD_OBJECT(
+				'skipped', params.skip,
+				'taken',   params.take,
+				'counted', (SELECT COUNT(*) FROM campus)
+				,
+				'campus', COALESCE((
+					SELECT JSONB_AGG(
+						paging.serial
+						ORDER BY paging.index
+					)
+					FROM (
+						SELECT campus.*
+						FROM campus
+						ORDER BY campus.index
+						LIMIT (SELECT take FROM params)
+						OFFSET (SELECT skip FROM params)
+					) AS paging
+				), '[]'::JSONB)
+			)
+		FROM params
+	`
+
+	var result string
+
+	if err := app.Database.
+		QueryRow(request.Context(), sqlGetCampus, skip, take, query).
+		Scan(&result); err != nil {
+
+		respondQueryFailed(writer, err, sqlGetCampus)
 		return
 	}
 

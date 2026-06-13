@@ -48,6 +48,35 @@ VALUES
 	('Sistemas de Informação', 'bachelor'),
 	('Turismo e Negócio', 'bachelor');
 
+CREATE TABLE IF NOT EXISTS cu.campus (
+	id         UUID NOT NULL DEFAULT cu.uuid_new(),
+	name       TEXT NOT NULL,
+	valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to   TIMESTAMPTZ,
+	valid_id   UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT campus_pk PRIMARY KEY (id),
+	CONSTRAINT ck_valid  CHECK (valid_from < valid_to)
+);
+
+CREATE UNIQUE INDEX campus_ux
+ON cu.campus (name, modality)
+WHERE valid_to IS NULL;
+
+CREATE UNIQUE INDEX campus_ux_valid
+ON cu.campus (valid_id)
+WHERE valid_to IS NULL;
+
+INSERT INTO cu.campus (name)
+VALUES
+	('Apucarana'),
+	('Campo Mourão'),
+	('Curitiba I'),
+	('Curitiba II'),
+	('Paranaguá'),
+	('Paranavaí'),
+	('União da Vitória'),
+	('Guatupê');
+
 CREATE TABLE IF NOT EXISTS cu.account (
 	id         UUID NOT NULL DEFAULT cu.uuid_new(),
 	name       TEXT NOT NULL,

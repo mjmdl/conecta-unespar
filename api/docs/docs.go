@@ -37,6 +37,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/campus": {
+            "get": {
+                "tags": [
+                    "Campus"
+                ],
+                "summary": "List the campus",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of campus to skip.",
+                        "name": "skip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 9,
+                        "description": "Number of campus to take.",
+                        "name": "take",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Query by campus name.",
+                        "name": "query",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Campus page",
+                        "schema": {
+                            "$ref": "#/definitions/main.CampusPageDto"
+                        }
+                    }
+                }
+            }
+        },
         "/chat": {
             "get": {
                 "tags": [
@@ -482,6 +520,37 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "main.CampusPageDto": {
+            "type": "object",
+            "properties": {
+                "campus": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "name": {
+                                "type": "string"
+                            },
+                            "validFrom": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "counted": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "taken": {
+                    "type": "integer"
+                }
+            }
+        },
         "main.ChatsPageDto": {
             "type": "object",
             "properties": {
