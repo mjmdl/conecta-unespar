@@ -138,17 +138,39 @@ ON cu.account (valid_id)
 WHERE valid_to IS NULL;
 
 CREATE TABLE IF NOT EXISTS cu.session (
-	id UUID NOT NULL DEFAULT cu.uuid_new(),
+	id         UUID NOT NULL DEFAULT cu.uuid_new(),
 	account_id UUID NOT NULL,
-	login_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	login_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 	expires_at TIMESTAMPTZ NOT NULL,
-	logout_at TIMESTAMPTZ,
+	logout_at  TIMESTAMPTZ,
 	CONSTRAINT session_pk PRIMARY KEY (id),
 	CONSTRAINT fk_account FOREIGN KEY (account_id) REFERENCES cu.account (id)
 );
 
 INSERT INTO cu.account (name, username, password)
 VALUES ('Elefante do PostgreSQL', 'psql', 'postgres');
+
+CREATE TABLE IF NOT EXISTS cu.enroll (
+	id          UUID NOT NULL DEFAULT cu.uuid_new(),
+	account_id  UUID NOT NULL,
+	offering_id UUID NOT NULL,
+	valid_from  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	valid_to    TIMESTAMPTZ,
+	valid_id    UUID NOT NULL DEFAULT cu.uuid_new(),
+	CONSTRAINT enroll_pk   PRIMARY KEY (id),
+	CONSTRAINT fk_account  FOREIGN KEY (account_id) REFERENCES cu.account (id),
+	CONSTRAINT fk_offering FOREIGN KEY (offering_id) REFERENCES cu.offering (id),
+	CONSTRAINT ck_valid    CHECK (valid_from < valid_to)
+);
+
+CREATE UNIQUE INDEX enroll_ux
+ON cu.enroll (account_id, offering_id)
+WHERE valid_to IS NULL;
+
+INSERT INTO cu.enroll (account_id, offering_id)
+SELECT account.id, offering.id
+FROM cu.account, cu.offering
+WHERE account.valid_to IS NULL AND offering.valid_to IS NULL;
 
 CREATE TYPE cu.chat_kind AS ENUM (
 	'direct',

@@ -600,9 +600,14 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 }
 
 type LogupDto struct {
-	Name     string `json:"name" validate:"required,accountName"`
-	Username string `json:"username" validate:"required,username"`
-	Password string `json:"password" validate:"required,password"`
+	Name     string    `json:"name" validate:"required,accountName"`
+	Username string    `json:"username" validate:"required,username"`
+	Password string    `json:"password" validate:"required,password"`
+	
+	Enroll *struct {
+		CourseId uuid.UUID `json:"courseId" validate:"required"`
+		CampusId uuid.UUID `json:"campusId" validate:"required"`
+	}                    `json:"enroll"`
 }
 
 // @Tags User
@@ -624,23 +629,51 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 	defer transa.Rollback(request.Context())
 
 	const sqlCheckUsernameAvailability = `
-		SELECT EXISTS (
-			SELECT 1 FROM cu.account
-			WHERE
-				account.username ILIKE $1::TEXT
-				AND account.valid_to IS NULL
-		);
+		SELECT
+			EXISTS (
+				SELECT
+				1 FROM cu.account
+				WHERE
+					account.username ILIKE $1::TEXT
+					AND account.valid_to IS NULL
+			),
+			EXISTS (
+				SELECT 1
+				FROM cu.offering
+				WHERE
+					offering.campus_id = $2::UUID
+					AND offering.course_id = $3::UUID
+					AND offering.valid_to IS NULL
+			)
 	`
-	var usernameIsTaken bool
-	if err := transa.
-		QueryRow(request.Context(), sqlCheckUsernameAvailability, logup.Username).
-		Scan(&usernameIsTaken); err != nil {
 
+	var (
+		campusId *uuid.UUID
+		courseId *uuid.UUID
+	)
+
+	if logup.Enroll != nil {
+		campusId = &logup.Enroll.CampusId
+		courseId = &logup.Enroll.CourseId
+	}
+	
+	var (
+		usernameIsTaken bool
+		offeringExists  bool
+	)
+	
+	if err := transa.QueryRow(request.Context(), sqlCheckUsernameAvailability, logup.Username, campusId, courseId).Scan(&usernameIsTaken, &offeringExists); err != nil {
 		respondQueryFailed(writer, err, sqlCheckUsernameAvailability)
 		return
 	}
+	
 	if usernameIsTaken {
 		respondConflict(writer, "The username is already used.")
+		return
+	}
+
+	if logup.Enroll != nil && !offeringExists {
+		respondNotFoundWhat(writer, "The offering does not exist.")
 		return
 	}
 
@@ -651,10 +684,36 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 	}
 
 	const sqlInsertAccount = `
-		INSERT INTO cu.account (name, username, password)
-		VALUES ($1::TEXT, LOWER($2::TEXT), $3::TEXT);
+		WITH
+		params AS (
+			SELECT
+				$1::TEXT AS name,
+				$2::TEXT AS username,
+				$3::TEXT AS password,
+				$4::UUID AS campus_id,
+				$5::UUID AS course_id
+		),
+		account AS MATERIALIZED (
+			INSERT INTO cu.account (name, username, password)
+			SELECT params.name, params.username, params.password
+			FROM params
+			RETURNING account.id
+		),
+		enroll AS MATERIALIZED (
+			INSERT INTO cu.enroll (account_id, offering_id)
+			SELECT account.id, offering.id
+			FROM account
+			CROSS JOIN params
+			INNER JOIN cu.offering
+				ON offering.campus_id = params.campus_id
+				AND offering.course_id = params.course_id
+				AND offering.valid_to IS NULL
+			LIMIT 1
+		)
+		SELECT 1
 	`
-	if _, err := transa.Exec(request.Context(), sqlInsertAccount, logup.Name, logup.Username, passwordHash); err != nil {
+	
+	if _, err := transa.Exec(request.Context(), sqlInsertAccount, logup.Name, logup.Username, passwordHash, campusId, courseId); err != nil {
 		respondQueryFailed(writer, err, sqlInsertAccount)
 		return
 	}

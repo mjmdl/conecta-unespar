@@ -735,6 +735,21 @@ const docTemplate = `{
                 "username"
             ],
             "properties": {
+                "enroll": {
+                    "type": "object",
+                    "required": [
+                        "campusId",
+                        "courseId"
+                    ],
+                    "properties": {
+                        "campusId": {
+                            "type": "string"
+                        },
+                        "courseId": {
+                            "type": "string"
+                        }
+                    }
+                },
                 "name": {
                     "type": "string"
                 },
