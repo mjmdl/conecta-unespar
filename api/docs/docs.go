@@ -244,6 +244,37 @@ const docTemplate = `{
                 }
             }
         },
+        "/group-chat/{id}": {
+            "patch": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Update a group chat.",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID.",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update the group chat.",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.UpdateChatDto"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "The group was updated."
+                    }
+                }
+            }
+        },
         "/login": {
             "post": {
                 "description": "Generates the access-token cookie.",
@@ -920,6 +951,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "pictureId": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.UpdateChatDto": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 }
             }

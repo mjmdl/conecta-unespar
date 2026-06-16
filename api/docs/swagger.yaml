@@ -251,6 +251,13 @@ definitions:
       pictureId:
         type: string
     type: object
+  main.UpdateChatDto:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    type: object
   main.UpdateDirectChatDto:
     properties:
       doBlock:
@@ -454,6 +461,26 @@ paths:
           schema:
             $ref: '#/definitions/main.CreateChatResultDto'
       summary: Create a group chat
+      tags:
+      - Chat
+  /group-chat/{id}:
+    patch:
+      parameters:
+      - description: Chat ID.
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update the group chat.
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.UpdateChatDto'
+      responses:
+        "204":
+          description: The group was updated.
+      summary: Update a group chat.
       tags:
       - Chat
   /login:

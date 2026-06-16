@@ -29,24 +29,24 @@ import (
 
 func main() {
 	environment := getEnvironmentVariables()
-	
+
 	connectionPool, err := pgxpool.New(context.Background(), environment.DatabaseUrl)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer connectionPool.Close()
-	
+
 	app := application{
 		Environment: environment,
 		Database:    connectionPool,
 		Validate:    createValidate(),
 	}
-	
+
 	router := chi.NewRouter()
 	app.setupRoutes(router)
 
 	log.Printf("Listening to :%s", environment.ServerPort)
-	http.ListenAndServe(":" + environment.ServerPort, router)
+	http.ListenAndServe(":"+environment.ServerPort, router)
 }
 
 /*
@@ -78,6 +78,7 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Get("/user", app.GetUsers)
 			router.Put("/direct-chat", app.PutDirectChat)
 			router.Post("/group-chat", app.PostGroupChat)
+			router.Patch("/group-chat/{id}", app.PatchGroupChat)
 			router.Get("/chat", app.GetChats)
 			router.Post("/post", app.PostPost)
 			router.Get("/post/chat/{chat-id}", app.GetChatPosts)
@@ -153,9 +154,9 @@ type environmentVariables struct {
 
 func getEnvironmentVariables() environmentVariables {
 	var serverPortName string
-	if os.Getenv("RAILWAY_ENVIRONMENT") == ""  {
+	if os.Getenv("RAILWAY_ENVIRONMENT") == "" {
 		if err := godotenv.Load("../.env"); err != nil {
-			log.Fatal(err);
+			log.Fatal(err)
 		}
 		serverPortName = "SERVER_PORT"
 	} else {
@@ -166,7 +167,7 @@ func getEnvironmentVariables() environmentVariables {
 	if environment != "production" && environment != "development" {
 		log.Printf(".env.ENVIRONMENT is expected to be either production or development")
 	}
-	
+
 	return environmentVariables{
 		IsDevelopment: environment == "development",
 		ServerPort:    requireEnvironmentVariable(serverPortName),
@@ -187,15 +188,15 @@ func requireEnvironmentVariable(name string) string {
  * Utilities
  */
 
-type userClaimsKey struct {}
+type userClaimsKey struct{}
 
 const accessTokenName = "access-token"
 
 const (
-	claimAccountId  = "sub"
-	claimSessionId  = "sid"
-	claimName       = "name"
-	claimExpiresAt  = "exp"
+	claimAccountId = "sub"
+	claimSessionId = "sid"
+	claimName      = "name"
+	claimExpiresAt = "exp"
 )
 
 func getUserId(contex context.Context) (string, bool) {
@@ -203,7 +204,7 @@ func getUserId(contex context.Context) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	
+
 	accountId, ok := (*claims)[claimAccountId].(string)
 	return accountId, ok
 }
@@ -234,7 +235,7 @@ func respondBadRequestError(writer http.ResponseWriter, err error) {
 }
 
 func respondBadRequestMessage(writer http.ResponseWriter, message string) {
-	http.Error(writer, "bad request: " + message, http.StatusBadRequest)
+	http.Error(writer, "bad request: "+message, http.StatusBadRequest)
 }
 
 func respondNotFound(writer http.ResponseWriter) {
@@ -242,11 +243,11 @@ func respondNotFound(writer http.ResponseWriter) {
 }
 
 func respondNotFoundWhat(writer http.ResponseWriter, what string) {
-	http.Error(writer, "not found: " + what, http.StatusNotFound)
+	http.Error(writer, "not found: "+what, http.StatusNotFound)
 }
 
 func respondConflict(writer http.ResponseWriter, message string) {
-	http.Error(writer, "conflict: " + message, http.StatusConflict)
+	http.Error(writer, "conflict: "+message, http.StatusConflict)
 }
 
 func respondUnauthorized(writer http.ResponseWriter) {
@@ -289,7 +290,7 @@ func getPaginationParameters(writer http.ResponseWriter, request *http.Request, 
 			return 0, 0, false
 		}
 	}
-	
+
 	if value := request.URL.Query().Get("take"); value != "" {
 		if take, err = strconv.Atoi(value); err != nil {
 			respondBadRequestError(writer, err)
@@ -340,6 +341,14 @@ func parseUUIDListOrRespond(writer http.ResponseWriter, value string) ([]uuid.UU
 	return ids, true
 }
 
+func expectCountOrRespond(writer http.ResponseWriter, values []any, count int) bool {
+	if len(values) != count {
+		respondBadRequestMessage(writer, "too many arguments")
+		return false
+	}
+	return true
+}
+
 /*
  * Middlewares
  */
@@ -375,7 +384,7 @@ func (app *application) AuthMiddleware(next http.Handler) http.Handler {
 					AND session.expires_at > NOW()
 			);
 		`
-		
+
 		sessionId := (*claims)[claimSessionId].(string)
 		var isValid bool
 		if err := app.Database.
@@ -386,7 +395,7 @@ func (app *application) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if (!isValid) {
+		if !isValid {
 			respondUnauthorized(writer)
 			return
 		}
@@ -406,17 +415,19 @@ type CoursesPageDto struct {
 	Counted int `json:"counted"`
 
 	Courses []struct {
-		Id        uuid.UUID `json:"id"`
-		Name      string    `json:"name"`
+		Id   uuid.UUID `json:"id"`
+		Name string    `json:"name"`
 		// Either one of those: bachelor, teaching, teaching_2, technology.
 		Modality  string    `json:"modality"`
 		ValidFrom time.Time `json:"validFrom"`
-	}                     `json:"courses"`
+	} `json:"courses"`
 }
 
 // @Tags Course
 // @Summary List the courses
-//        name   source  datatype  required  description                   properties
+//
+// param  name   source  datatype  required  description                   properties
+//
 // @Param skip   query   int       false     "Number of courses to skip."  default(0)
 // @Param take   query   int       false     "Number of courses to take."  default(9)
 // @Param query  query   string    false     "Query by course name."
@@ -429,7 +440,7 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	query := request.URL.Query().Get("query")
-	
+
 	campus, ok := parseUUIDOrRespond(writer, request.URL.Query().Get("campus"))
 	if !ok {
 		return
@@ -524,12 +535,14 @@ type CampusPageDto struct {
 		Id        uuid.UUID `json:"id"`
 		Name      string    `json:"name"`
 		ValidFrom time.Time `json:"validFrom"`
-	}                     `json:"campus"`
+	} `json:"campus"`
 }
 
 // @Tags Campus
 // @Summary List the campus
-//        name    source  datatype  required  description                   properties
+//
+// param  name    source  datatype  required  description                   properties
+//
 // @Param skip    query   int       false     "Number of campus to skip."  default(0)
 // @Param take    query   int       false     "Number of campus to take."  default(9)
 // @Param query   query   string    false     "Query by campus name."
@@ -628,14 +641,14 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 }
 
 type LogupDto struct {
-	Name     string    `json:"name" validate:"required,accountName"`
-	Username string    `json:"username" validate:"required,username"`
-	Password string    `json:"password" validate:"required,password"`
-	
+	Name     string `json:"name" validate:"required,accountName"`
+	Username string `json:"username" validate:"required,username"`
+	Password string `json:"password" validate:"required,password"`
+
 	Enroll *struct {
 		CourseId uuid.UUID `json:"courseId" validate:"required"`
 		CampusId uuid.UUID `json:"campusId" validate:"required"`
-	}                    `json:"enroll"`
+	} `json:"enroll"`
 }
 
 // @Tags User
@@ -684,17 +697,17 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		campusId = &logup.Enroll.CampusId
 		courseId = &logup.Enroll.CourseId
 	}
-	
+
 	var (
 		usernameIsTaken bool
 		offeringExists  bool
 	)
-	
+
 	if err := transa.QueryRow(request.Context(), sqlCheckUsernameAvailability, logup.Username, campusId, courseId).Scan(&usernameIsTaken, &offeringExists); err != nil {
 		respondQueryFailed(writer, err, sqlCheckUsernameAvailability)
 		return
 	}
-	
+
 	if usernameIsTaken {
 		respondConflict(writer, "The username is already used.")
 		return
@@ -740,7 +753,7 @@ func (app *application) PostLogup(writer http.ResponseWriter, request *http.Requ
 		)
 		SELECT 1
 	`
-	
+
 	if _, err := transa.Exec(request.Context(), sqlInsertAccount, logup.Name, logup.Username, passwordHash, campusId, courseId); err != nil {
 		respondQueryFailed(writer, err, sqlInsertAccount)
 		return
@@ -772,7 +785,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 
 	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
-		return;
+		return
 	}
 	defer transa.Rollback(request.Context())
 
@@ -786,13 +799,13 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 			account.username ILIKE $1::TEXT
 			AND account.valid_to IS NULL;
 	`
-	
+
 	var (
 		accountId uuid.UUID
 		name      string
 		password  string
 	)
-	
+
 	if err := transa.
 		QueryRow(request.Context(), sqlFindCredentials, login.Username).
 		Scan(&accountId, &name, &password); err != nil {
@@ -816,7 +829,7 @@ func (app *application) PostLogin(writer http.ResponseWriter, request *http.Requ
 	if err := transa.
 		QueryRow(request.Context(), sqlCreateSession, accountId, expiresAt).
 		Scan(&sessionId); err != nil {
-		
+
 		respondQueryFailed(writer, err, sqlCreateSession)
 		return
 	}
@@ -916,7 +929,7 @@ func (app *application) GetMe(writer http.ResponseWriter, request *http.Request)
 		name      string
 		pictureId *string
 	)
-	
+
 	if err := app.Database.
 		QueryRow(request.Context(), sqlGetMe, accountId).
 		Scan(&name, &pictureId); err != nil {
@@ -924,10 +937,10 @@ func (app *application) GetMe(writer http.ResponseWriter, request *http.Request)
 		respondQueryFailed(writer, err, sqlGetMe)
 		return
 	}
-	
+
 	resultDto := ProfileResultDto{
-		Id: accountId,
-		Name: name,
+		Id:        accountId,
+		Name:      name,
 		PictureId: pictureId,
 	}
 	respondJson(writer, http.StatusOK, resultDto)
@@ -940,12 +953,12 @@ func (app *application) GetMe(writer http.ResponseWriter, request *http.Request)
 // @Success 204
 // @Router /profile-picture [put]
 func (app *application) PutProfilePicture(writer http.ResponseWriter, request *http.Request) {
-	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
 	accountId := (*claims)[claimAccountId].(string)
 
 	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
-		return;
+		return
 	}
 	defer transa.Rollback(request.Context())
 
@@ -954,7 +967,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 		respondBadRequestMessage(writer, "invalid file")
 		return
 	}
-	
+
 	data, err := io.ReadAll(file)
 	file.Close()
 	if err != nil {
@@ -986,7 +999,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 	if !app.CommitTransa(writer, request, transa) {
 		return
 	}
-	
+
 	writer.WriteHeader(http.StatusNoContent)
 }
 
@@ -995,7 +1008,7 @@ func (app *application) PutProfilePicture(writer http.ResponseWriter, request *h
 // @Success 204
 // @Router /profile-picture [delete]
 func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request *http.Request) {
-	claims    := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
 	accountId := (*claims)[claimAccountId].(string)
 
 	const sqlDeleteAttach = `
@@ -1016,11 +1029,11 @@ func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request
 	if err := app.Database.
 		QueryRow(request.Context(), sqlDeleteAttach, accountId).
 		Scan(&pictureExists); err != nil {
-		
+
 		respondQueryFailed(writer, err, sqlDeleteAttach)
 		return
 	}
-	
+
 	if !pictureExists {
 		respondNotFound(writer)
 		return
@@ -1028,7 +1041,7 @@ func (app *application) DeleteProfilePicture(writer http.ResponseWriter, request
 
 	writer.WriteHeader(http.StatusNoContent)
 }
-	
+
 // @Tags Attachments
 // @Summary Retrieve attachment file
 // @Param id path string true "Attachment ID"
@@ -1039,7 +1052,7 @@ func (app *application) GetAttach(writer http.ResponseWriter, request *http.Requ
 	if !ok {
 		return
 	}
-	attachId  := chi.URLParam(request, "id")
+	attachId := chi.URLParam(request, "id")
 
 	const sqlGetAttach = `
 		WITH
@@ -1080,9 +1093,9 @@ func (app *application) GetAttach(writer http.ResponseWriter, request *http.Requ
 					)
 				END;
 	`
-	
+
 	var filename string
-	var data     []byte
+	var data []byte
 	if err := app.Database.
 		QueryRow(request.Context(), sqlGetAttach, attachId, accountId).
 		Scan(&filename, &data); err != nil {
@@ -1092,11 +1105,11 @@ func (app *application) GetAttach(writer http.ResponseWriter, request *http.Requ
 		} else {
 			respondQueryFailed(writer, err, sqlGetAttach)
 		}
-		
+
 		return
 	}
 
-	writer.Header().Set("Content-Disposition", `inline; filename="` + filename + `"`)
+	writer.Header().Set("Content-Disposition", `inline; filename="`+filename+`"`)
 	writer.Header().Set("Content-Type", http.DetectContentType(data))
 	writer.WriteHeader(http.StatusOK)
 	writer.Write(data)
@@ -1120,7 +1133,7 @@ type UsersPageDto struct {
 			IsFriend      bool      `json:"isFriend"`
 			YouBlockedHim bool      `json:"youBlockedHim"`
 			HimBlockedYou bool      `json:"himBlockedYou"`
-		}                         `json:"directInfo"`
+		} `json:"directInfo"`
 	} `json:"users"`
 }
 
@@ -1270,7 +1283,7 @@ type CreateChatResultDto struct {
 // @Success 201 {object} CreateChatResultDto "Direct chat created."
 // @Router /direct-chat [put]
 func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.Request) {
-	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
 	userAccountId := (*claims)[claimAccountId].(string)
 
 	var chat UpdateDirectChatDto
@@ -1281,10 +1294,10 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 
 	transa, ok := app.BeginTransa(writer, request)
 	if !ok {
-		return;
+		return
 	}
 	defer transa.Rollback(request.Context())
-	
+
 	const sqlFindChat = `
 		WITH params AS (
 			SELECT
@@ -1333,10 +1346,18 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 			return
 		}
 
-		if chat.DoFriend != nil && *chat.DoFriend == isUsersFriend { chat.DoFriend = nil }
-		if chat.DoPin != nil && *chat.DoPin == isUsersPin          { chat.DoPin = nil }
-		if chat.DoMute != nil && *chat.DoMute == isUsersMute       { chat.DoMute = nil }
-		if chat.DoBlock != nil && *chat.DoBlock == isUsersBlock    { chat.DoBlock = nil }
+		if chat.DoFriend != nil && *chat.DoFriend == isUsersFriend {
+			chat.DoFriend = nil
+		}
+		if chat.DoPin != nil && *chat.DoPin == isUsersPin {
+			chat.DoPin = nil
+		}
+		if chat.DoMute != nil && *chat.DoMute == isUsersMute {
+			chat.DoMute = nil
+		}
+		if chat.DoBlock != nil && *chat.DoBlock == isUsersBlock {
+			chat.DoBlock = nil
+		}
 
 		if chat.DoFriend == nil && chat.DoPin == nil && chat.DoMute == nil && chat.DoBlock == nil {
 			respondConflict(writer, "nothing to update")
@@ -1373,7 +1394,7 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 			respondQueryFailed(writer, err, sqlUpdateChat)
 			return
 		}
-		
+
 		writer.WriteHeader(http.StatusNoContent)
 	} else if err == pgx.ErrNoRows {
 		const sqlCreateChat = `
@@ -1429,9 +1450,9 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 				chat,
 				members;
 		`
-		
+
 		var chatId uuid.UUID
-		
+
 		if err := transa.
 			QueryRow(request.Context(), sqlCreateChat, userAccountId, chat.OtherAccountId, chat.DoPin, chat.DoFriend, chat.DoMute, chat.DoBlock).
 			Scan(&chatId); err != nil {
@@ -1446,7 +1467,7 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		respondQueryFailed(writer, err, sqlFindChat)
 		return
 	}
-	
+
 	app.CommitTransa(writer, request, transa)
 }
 
@@ -1464,24 +1485,23 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 	if !ok {
 		return
 	}
-	_ = userAccountId
 
 	const formCapacity = 1024 * 1024 * 32 // 32 MB
-	const maxFileSize  = 1024 * 1024 * 10 // 10 MB
-	
+	const maxFileSize = 1024 * 1024 * 10  // 10 MB
+
 	if err := request.ParseMultipartForm(formCapacity); err != nil {
 		respondBadRequestError(writer, err)
 		return
 	}
- 	
-	name        := request.FormValue("name")
+
+	name := request.FormValue("name")
 	description := nilIfEmptyString(request.FormValue("description"))
 
 	memberAccountIds, ok := parseUUIDListOrRespond(writer, request.FormValue("accountIds"))
 	if !ok {
 		return
 	}
-	
+
 	picture, pictureHeader, err := request.FormFile("picture")
 	if err != nil {
 		respondBadRequestError(writer, err)
@@ -1492,10 +1512,10 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 		pictureData     []byte
 		pictureFilename *string
 	)
-	
+
 	if picture != nil && pictureHeader != nil {
 		defer picture.Close()
-		
+
 		if pictureHeader.Size >= maxFileSize {
 			respondPayloadTooLarge(writer)
 			return
@@ -1515,7 +1535,7 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 		return
 	}
 	defer transa.Rollback(request.Context())
-	
+
 	const sqlCheckAccountsExist = `
 		SELECT COUNT(*) = CARDINALITY($1::UUID[])
 		FROM cu.account
@@ -1526,7 +1546,7 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 	`
 
 	var membersExist bool
-	
+
 	if err := transa.
 		QueryRow(request.Context(), sqlCheckAccountsExist, memberAccountIds, userAccountId).
 		Scan(&membersExist); err != nil {
@@ -1604,7 +1624,7 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 	`
 
 	var chatId uuid.UUID
-	
+
 	if err := transa.
 		QueryRow(request.Context(), sqlCreateChat, userAccountId, memberAccountIds, name, description, pictureFilename, pictureData).
 		Scan(&chatId); err != nil {
@@ -1616,8 +1636,79 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 	if !app.CommitTransa(writer, request, transa) {
 		return
 	}
-	
+
 	respondJson(writer, http.StatusCreated, CreateChatResultDto{ChatId: chatId})
+}
+
+type UpdateChatDto struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+}
+
+// @Tags Chat
+// @Summary Update a group chat.
+// @Param id path string true "Chat ID."
+// @Param body body UpdateChatDto true "Update the group chat."
+// @Success 204 "The group was updated."
+// @Router /group-chat/{id} [patch]
+func (app *application) PatchGroupChat(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	chatId := chi.URLParam(request, "id")
+
+	var update UpdateChatDto
+	if err := app.ParseAndValidateRequestBody(request, &update); err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	if update.Name == nil && update.Description == nil {
+		respondBadRequestMessage(writer, "nothing to update")
+		return
+	}
+
+	const sqlUpdateChat = `
+		WITH params AS (
+			SELECT
+				$1::UUID             AS chat_id,
+				NULLIF($2::TEXT, '') AS name,
+				NULLIF($3::TEXT, '') AS description,
+				$4::UUID             AS account_id
+		),
+		chat AS (
+			UPDATE cu.chat SET
+				name        = COALESCE(params.name, chat.name),
+				description = COALESCE(params.description, chat.description)
+			FROM
+				params,
+				cu.member
+			WHERE
+				params.chat_id = chat.id
+				AND params.account_id = member.account_id
+				AND chat.kind = 'group'
+				AND chat.valid_to IS NULL
+				AND member.chat_id = chat.id
+				AND member.is_group_admin
+				AND member.valid_to IS NULL
+			RETURNING chat.id
+		)
+		SELECT COUNT(id)
+		FROM chat
+	`
+
+	var count int
+	if err := app.Database.QueryRow(request.Context(), sqlUpdateChat, chatId, update.Name, update.Description, userAccountId).Scan(&count); err != nil {
+		respondQueryFailed(writer, err, sqlUpdateChat)
+		return
+	}
+
+	if count == 0 {
+		respondNotFoundWhat(writer, "You cannot update this chat.")
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 type ChatsPageDto struct {
@@ -1636,28 +1727,29 @@ type ChatsPageDto struct {
 		DirectInfo *struct {
 			Id            uuid.UUID `json:"id"`
 			Name          string    `json:"name"`
+			Description   string    `json:"description"`
 			YouBlockedHim bool      `json:"youBlockedHim"`
 			HimBlockedYou bool      `json:"himBlockedYou"`
-		}                         `json:"directInfo"`
+		} `json:"directInfo"`
 
 		// Present only for group chats.
 		GroupInfo *struct {
 			Name        string `json:"name"`
 			YouAreAdmin bool   `json:"youAreAdmin"`
 			YouAreOwner bool   `json:"youAreOwner"`
-		}                    `json:"groupInfo"`
+		} `json:"groupInfo"`
 
 		LastPost *struct {
 			Id        uuid.UUID `json:"id"`
 			Message   *string   `json:"message"`
 			FileCount int       `json:"fileCount"`
 			PostedAt  time.Time `json:"postedAt"`
-			
+
 			Poster struct {
 				Id   uuid.UUID `json:"id"`
 				Name string    `json:"name"`
-			}                `json:"poster"`
-		}                  `json:"lastPost"`
+			} `json:"poster"`
+		} `json:"lastPost"`
 	} `json:"chats"`
 }
 
@@ -1683,7 +1775,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 		skip int
 		take int
 	)
-	
+
 	if chatId != "" {
 		skip = 0
 		take = 1
@@ -1922,35 +2014,35 @@ type CreatePostResultDto struct {
 // @Success 201 {object} CreatePostResultDto "The post is posted."
 // @Router /post [post]
 func (app *application) PostPost(writer http.ResponseWriter, request *http.Request) {
-	claims        := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
+	claims := request.Context().Value(userClaimsKey{}).(*jwt.MapClaims)
 	userAccountId := (*claims)[claimAccountId].(string)
 
 	const formCapacity = 1024 * 1024 * 32 // 32 MB
-	const maxFileSize  = 1024 * 1024 * 10 // 10 MB
-	
+	const maxFileSize = 1024 * 1024 * 10  // 10 MB
+
 	if err := request.ParseMultipartForm(formCapacity); err != nil {
 		respondBadRequestError(writer, err)
 		return
 	}
 
-	chatId    := request.FormValue("chatId")
+	chatId := request.FormValue("chatId")
 	replyToId := nilIfEmptyString(request.FormValue("replyToId"))
-	message   := nilIfEmptyString(request.FormValue("message"))
-	files     := request.MultipartForm.File["attach"]
+	message := nilIfEmptyString(request.FormValue("message"))
+	files := request.MultipartForm.File["attach"]
 
 	if message == nil && len(files) == 0 {
 		respondBadRequestMessage(writer, "please send a message or some files")
 		return
 	}
-	
+
 	filenames := make([]string, 0, len(files))
-	contents  := make([][]byte, 0, len(files))
+	contents := make([][]byte, 0, len(files))
 	for _, header := range files {
 		if header.Size > maxFileSize {
 			respondPayloadTooLarge(writer)
 			return
 		}
-		
+
 		file, err := header.Open()
 		if err != nil {
 			respondInternalServerError(writer, err, "failed to open file")
@@ -1973,7 +2065,7 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	defer transa.Rollback(request.Context())
-	
+
 	const sqlCheckChatState = `
 		WITH
 		params AS (
@@ -2040,8 +2132,8 @@ func (app *application) PostPost(writer http.ResponseWriter, request *http.Reque
 		respondConflict(writer, "you've been blocked")
 		return
 	}
-	
-	if time.Since(lastPostTime) < 200 * time.Millisecond {
+
+	if time.Since(lastPostTime) < 200*time.Millisecond {
 		respondTooManyRequests(writer)
 		return
 	}
@@ -2116,10 +2208,10 @@ type PostsPageDto struct {
 	Counted int `json:"counted"`
 
 	Posts []struct {
-		Id        uuid.UUID   `json:"id"`
-		MemberId  uuid.UUID   `json:"memberId"`
-		SentAt    time.Time   `json:"sentAt"`
-		DeletedAt time.Time   `json:"deletedAt"`
+		Id        uuid.UUID `json:"id"`
+		MemberId  uuid.UUID `json:"memberId"`
+		SentAt    time.Time `json:"sentAt"`
+		DeletedAt time.Time `json:"deletedAt"`
 
 		// The payload is null when deletedAt is not null.
 		Payload *struct {
@@ -2133,12 +2225,12 @@ type PostsPageDto struct {
 			MemberId   uuid.UUID  `json:"memberId"`
 			ReceivedAt time.Time  `json:"receivedAt"`
 			ViewedAt   *time.Time `json:"viewedAt"`
-		}                       `json:"receipts"`
+		} `json:"receipts"`
 
 		Reactions []struct {
 			Emoticon  string      `json:"emoticon"`
 			MemberIds []uuid.UUID `json:"memberIds"`
-		}                       `json:"reactions"`
+		} `json:"reactions"`
 	} `json:"posts"`
 }
 
@@ -2152,7 +2244,7 @@ type PostsPageDto struct {
 // @Router /post/chat/{chat-id} [get]
 func (app *application) GetChatPosts(writer http.ResponseWriter, request *http.Request) {
 	chatId := chi.URLParam(request, "chat-id")
-	
+
 	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
 	if !ok {
 		return
@@ -2328,7 +2420,7 @@ type MembersPageDto struct {
 			Id        uuid.UUID  `json:"id"`
 			PictureId *uuid.UUID `json:"pictureId"`
 			Name      string     `json:"name"`
-		}                      `json:"account"`
+		} `json:"account"`
 	} `json:"members"`
 }
 
