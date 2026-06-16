@@ -212,8 +212,10 @@ ON cu.member (account_id, chat_id)
 WHERE valid_to IS NULL;
 
 CREATE UNIQUE INDEX member_ux_group_owner
-ON cu.member (chat_id, is_group_owner)
-WHERE valid_to IS NULL;
+ON cu.member (chat_id)
+WHERE
+	valid_to IS NULL
+	AND is_group_owner;
 
 CREATE TABLE cu.post (
 	id          UUID NOT NULL DEFAULT cu.uuid_new(),

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -310,6 +311,33 @@ func toUUID(writer http.ResponseWriter, value string) (string, bool) {
 	} else {
 		return value, true
 	}
+}
+
+func parseUUIDList(value string) ([]uuid.UUID, error) {
+	if value == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(value, ",")
+	ids := make([]uuid.UUID, 0, len(parts))
+	for _, part := range parts {
+		id, err := uuid.Parse(strings.TrimSpace(part))
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, nil
+}
+
+func parseUUIDListOrRespond(writer http.ResponseWriter, value string) ([]uuid.UUID, bool) {
+	ids, err := parseUUIDList(value)
+	if err != nil {
+		respondBadRequestError(writer, err)
+		return nil, false
+	}
+	return ids, true
 }
 
 /*
@@ -1445,12 +1473,16 @@ func (app *application) PostGroupChat(writer http.ResponseWriter, request *http.
 		respondBadRequestError(writer, err)
 		return
 	}
+ 	
+	name        := request.FormValue("name")
+	description := nilIfEmptyString(request.FormValue("description"))
 
-	name             := request.FormValue("name")
-	description      := nilIfEmptyString(request.FormValue("description"))
-	memberAccountIds := request.MultipartForm.Value["accountIds"]
-	picture, pictureHeader, err := request.FormFile("picture")
+	memberAccountIds, ok := parseUUIDListOrRespond(writer, request.FormValue("accountIds"))
+	if !ok {
+		return
+	}
 	
+	picture, pictureHeader, err := request.FormFile("picture")
 	if err != nil {
 		respondBadRequestError(writer, err)
 		return
