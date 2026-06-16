@@ -89,6 +89,12 @@ const docTemplate = `{
                 "summary": "List the current user chats",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Find chat by ID.",
+                        "name": "id",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "default": 0,
                         "description": "Number of chats to skip.",

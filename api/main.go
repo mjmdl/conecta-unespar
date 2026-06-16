@@ -300,9 +300,9 @@ func getPaginationParameters(writer http.ResponseWriter, request *http.Request, 
 	return skip, take, true
 }
 
-func toUUID(writer http.ResponseWriter, value string) (string, bool) {
+func parseUUIDOrRespond(writer http.ResponseWriter, value string) (string, bool) {
 	if value == "" {
-		return value, true
+		return "", true
 	}
 	_, err := uuid.Parse(value)
 	if err != nil {
@@ -430,7 +430,7 @@ func (app *application) GetCourses(writer http.ResponseWriter, request *http.Req
 	}
 	query := request.URL.Query().Get("query")
 	
-	campus, ok := toUUID(writer, request.URL.Query().Get("campus"))
+	campus, ok := parseUUIDOrRespond(writer, request.URL.Query().Get("campus"))
 	if !ok {
 		return
 	}
@@ -543,7 +543,7 @@ func (app *application) GetCampus(writer http.ResponseWriter, request *http.Requ
 	}
 	query := request.URL.Query().Get("query")
 
-	course, ok := toUUID(writer, request.URL.Query().Get("campus"))
+	course, ok := parseUUIDOrRespond(writer, request.URL.Query().Get("campus"))
 	if !ok {
 		return
 	}
@@ -1663,6 +1663,7 @@ type ChatsPageDto struct {
 
 // @Tags Chat
 // @Summary List the current user chats
+// @Param id query string false "Find chat by ID."
 // @Param skip query int false "Number of chats to skip." default(0)
 // @Param take query int false "Number of chats to take." default(9)
 // @Success 200 {object} ChatsPageDto "Current user profile"
@@ -1673,9 +1674,25 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
-	skip, take, ok := getPaginationParameters(writer, request, 0, 9)
+	chatId, ok := parseUUIDOrRespond(writer, request.URL.Query().Get("id"))
 	if !ok {
 		return
+	}
+
+	var (
+		skip int
+		take int
+	)
+	
+	if chatId != "" {
+		skip = 0
+		take = 1
+	} else {
+		var ok bool
+		skip, take, ok = getPaginationParameters(writer, request, 0, 9)
+		if !ok {
+			return
+		}
 	}
 
 	const sqlGetChats = `
@@ -1683,7 +1700,8 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 			SELECT
 				$1::UUID    AS account_id,
 				$2::INTEGER AS skip,
-				$3::INTEGER AS take
+				$3::INTEGER AS take,
+				NULLIF($4::TEXT, '')::UUID AS chat_id
 		)
 		,
 		chat_info (
@@ -1755,6 +1773,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 					) AS poster ON TRUE
 				WHERE
 					chat.kind = 'direct'
+					AND (params.chat_id IS NULL OR chat.id = params.chat_id)
 					AND chat.valid_to IS NULL
 			UNION ALL
 				SELECT
@@ -1807,6 +1826,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 						AND poster.valid_to IS NULL
 				WHERE
 					chat.kind = 'group'
+					AND (params.chat_id IS NULL OR chat.id = params.chat_id)
 					AND chat.valid_to IS NULL
 		)
 		,
@@ -1878,7 +1898,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 	var result string
 
 	if err := app.Database.
-		QueryRow(request.Context(), sqlGetChats, userAccountId, skip, take).
+		QueryRow(request.Context(), sqlGetChats, userAccountId, skip, take, chatId).
 		Scan(&result); err != nil {
 
 		respondQueryFailed(writer, err, sqlGetChats)

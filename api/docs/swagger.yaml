@@ -352,6 +352,10 @@ paths:
   /chat:
     get:
       parameters:
+      - description: Find chat by ID.
+        in: query
+        name: id
+        type: string
       - default: 0
         description: Number of chats to skip.
         in: query
