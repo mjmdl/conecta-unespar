@@ -275,6 +275,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/group-chat/{id}/picture": {
+            "delete": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Remove group chat picture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "put": {
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Update group chat picture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Group picture",
+                        "name": "picture",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/login": {
             "post": {
                 "description": "Generates the access-token cookie.",
@@ -394,6 +446,89 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/main.MembersPageDto"
                         }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Member"
+                ],
+                "summary": "Add members to a group chat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID",
+                        "name": "chat-id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Accounts to add",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.AddMembersDto"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Members added",
+                        "schema": {
+                            "$ref": "#/definitions/main.AddMembersResultDto"
+                        }
+                    }
+                }
+            }
+        },
+        "/member/{id}": {
+            "delete": {
+                "tags": [
+                    "Member"
+                ],
+                "summary": "Remove a member from a group chat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Member ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "Member"
+                ],
+                "summary": "Update a group member",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Member ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Member options",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.UpdateMemberDto"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     }
                 }
             }
@@ -741,6 +876,31 @@ const docTemplate = `{
                 }
             }
         },
+        "main.AddMembersDto": {
+            "type": "object",
+            "required": [
+                "accountIds"
+            ],
+            "properties": {
+                "accountIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "main.AddMembersResultDto": {
+            "type": "object",
+            "properties": {
+                "memberIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "main.CreatePostResultDto": {
             "type": "object",
             "properties": {
@@ -963,6 +1123,14 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "main.UpdateMemberDto": {
+            "type": "object",
+            "properties": {
+                "doAdmin": {
+                    "type": "boolean"
                 }
             }
         },

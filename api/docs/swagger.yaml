@@ -111,6 +111,22 @@ definitions:
       chatId:
         type: string
     type: object
+  main.AddMembersDto:
+    properties:
+      accountIds:
+        items:
+          type: string
+        type: array
+    required:
+    - accountIds
+    type: object
+  main.AddMembersResultDto:
+    properties:
+      memberIds:
+        items:
+          type: string
+        type: array
+    type: object
   main.CreatePostResultDto:
     properties:
       postId:
@@ -257,6 +273,11 @@ definitions:
         type: string
       name:
         type: string
+    type: object
+  main.UpdateMemberDto:
+    properties:
+      doAdmin:
+        type: boolean
     type: object
   main.UpdateDirectChatDto:
     properties:
@@ -483,6 +504,40 @@ paths:
       summary: Update a group chat.
       tags:
       - Chat
+  /group-chat/{id}/picture:
+    delete:
+      parameters:
+      - description: Chat ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Remove group chat picture
+      tags:
+      - Chat
+    put:
+      consumes:
+      - multipart/form-data
+      parameters:
+      - description: Chat ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Group picture
+        in: formData
+        name: picture
+        required: true
+        type: file
+      responses:
+        "204":
+          description: No Content
+      summary: Update group chat picture
+      tags:
+      - Chat
   /login:
     post:
       description: Generates the access-token cookie.
@@ -560,6 +615,60 @@ paths:
           schema:
             $ref: '#/definitions/main.MembersPageDto'
       summary: List members in a chat
+      tags:
+      - Member
+    post:
+      parameters:
+      - description: Chat ID
+        in: path
+        name: chat-id
+        required: true
+        type: string
+      - description: Accounts to add
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.AddMembersDto'
+      responses:
+        "201":
+          description: Members added
+          schema:
+            $ref: '#/definitions/main.AddMembersResultDto'
+      summary: Add members to a group chat
+      tags:
+      - Member
+  /member/{id}:
+    delete:
+      parameters:
+      - description: Member ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Remove a member from a group chat
+      tags:
+      - Member
+    patch:
+      parameters:
+      - description: Member ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Member options
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.UpdateMemberDto'
+      responses:
+        "204":
+          description: No Content
+      summary: Update a group member
       tags:
       - Member
   /post:

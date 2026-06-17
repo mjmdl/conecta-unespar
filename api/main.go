@@ -79,10 +79,15 @@ func (app *application) setupRoutes(router chi.Router) {
 			router.Put("/direct-chat", app.PutDirectChat)
 			router.Post("/group-chat", app.PostGroupChat)
 			router.Patch("/group-chat/{id}", app.PatchGroupChat)
+			router.Put("/group-chat/{id}/picture", app.PutGroupChatPicture)
+			router.Delete("/group-chat/{id}/picture", app.DeleteGroupChatPicture)
 			router.Get("/chat", app.GetChats)
 			router.Post("/post", app.PostPost)
 			router.Get("/post/chat/{chat-id}", app.GetChatPosts)
 			router.Get("/member/chat/{chat-id}", app.GetChatMembers)
+			router.Post("/member/chat/{chat-id}", app.PostChatMembers)
+			router.Patch("/member/{id}", app.PatchMember)
+			router.Delete("/member/{id}", app.DeleteMember)
 		})
 	})
 }
@@ -1706,6 +1711,177 @@ func (app *application) PatchGroupChat(writer http.ResponseWriter, request *http
 
 	if count == 0 {
 		respondNotFoundWhat(writer, "You cannot update this chat.")
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// @Tags Chat
+// @Summary Update group chat picture
+// @Accept multipart/form-data
+// @Param id path string true "Chat ID"
+// @Param picture formData file true "Group picture"
+// @Success 204
+// @Router /group-chat/{id}/picture [put]
+func (app *application) PutGroupChatPicture(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	chatId := chi.URLParam(request, "id")
+
+	const formCapacity = 1024 * 1024 * 32 // 32 MB
+	const maxFileSize = 1024 * 1024 * 10  // 10 MB
+
+	if err := request.ParseMultipartForm(formCapacity); err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	file, header, err := request.FormFile("picture")
+	if err != nil {
+		respondBadRequestMessage(writer, "invalid file")
+		return
+	}
+
+	if header.Size >= maxFileSize {
+		respondPayloadTooLarge(writer)
+		return
+	}
+
+	data, err := io.ReadAll(file)
+	file.Close()
+	if err != nil {
+		respondBadRequestMessage(writer, "invalid file")
+		return
+	}
+
+	transa, ok := app.BeginTransa(writer, request)
+	if !ok {
+		return
+	}
+	defer transa.Rollback(request.Context())
+
+	const sqlCheckAdmin = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM cu.chat
+			INNER JOIN cu.member
+				ON member.chat_id = chat.id
+				AND member.account_id = $2::UUID
+				AND member.is_group_admin
+				AND member.valid_to IS NULL
+			WHERE
+				chat.id = $1::UUID
+				AND chat.kind = 'group'::cu.chat_kind
+				AND chat.valid_to IS NULL
+		)
+	`
+
+	var isAdmin bool
+	if err := transa.QueryRow(request.Context(), sqlCheckAdmin, chatId, userAccountId).Scan(&isAdmin); err != nil {
+		respondQueryFailed(writer, err, sqlCheckAdmin)
+		return
+	}
+
+	if !isAdmin {
+		respondNotFoundWhat(writer, "You cannot update this chat.")
+		return
+	}
+
+	const sqlDeleteAttach = `
+		UPDATE cu.attach
+		SET deleted_at = NOW()
+		WHERE
+			chat_id = $1::UUID
+			AND kind = 'chat_picture'::cu.attach_kind
+			AND deleted_at IS NULL
+	`
+	if _, err := transa.Exec(request.Context(), sqlDeleteAttach, chatId); err != nil {
+		respondQueryFailed(writer, err, sqlDeleteAttach)
+		return
+	}
+
+	const sqlInsertAttach = `
+		INSERT INTO cu.attach (kind, chat_id, filename, content)
+		VALUES ('chat_picture', $1::UUID, $2::TEXT, $3::BYTEA)
+	`
+	if _, err := transa.Exec(request.Context(), sqlInsertAttach, chatId, header.Filename, data); err != nil {
+		respondQueryFailed(writer, err, sqlInsertAttach)
+		return
+	}
+
+	if !app.CommitTransa(writer, request, transa) {
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// @Tags Chat
+// @Summary Remove group chat picture
+// @Param id path string true "Chat ID"
+// @Success 204
+// @Router /group-chat/{id}/picture [delete]
+func (app *application) DeleteGroupChatPicture(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	chatId := chi.URLParam(request, "id")
+
+	const sqlCheckAdmin = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM cu.chat
+			INNER JOIN cu.member
+				ON member.chat_id = chat.id
+				AND member.account_id = $2::UUID
+				AND member.is_group_admin
+				AND member.valid_to IS NULL
+			WHERE
+				chat.id = $1::UUID
+				AND chat.kind = 'group'::cu.chat_kind
+				AND chat.valid_to IS NULL
+		)
+	`
+
+	var isAdmin bool
+	if err := app.Database.QueryRow(request.Context(), sqlCheckAdmin, chatId, userAccountId).Scan(&isAdmin); err != nil {
+		respondQueryFailed(writer, err, sqlCheckAdmin)
+		return
+	}
+
+	if !isAdmin {
+		respondNotFoundWhat(writer, "You cannot update this chat.")
+		return
+	}
+
+	const sqlDeleteAttach = `
+		WITH soft_delete AS (
+			UPDATE cu.attach
+			SET deleted_at = NOW()
+			WHERE
+				chat_id = $1::UUID
+				AND kind = 'chat_picture'::cu.attach_kind
+				AND deleted_at IS NULL
+			RETURNING id
+		)
+		SELECT EXISTS (
+			SELECT 1 FROM soft_delete
+		);
+	`
+
+	var pictureExists bool
+	if err := app.Database.QueryRow(request.Context(), sqlDeleteAttach, chatId).Scan(&pictureExists); err != nil {
+		respondQueryFailed(writer, err, sqlDeleteAttach)
+		return
+	}
+
+	if !pictureExists {
+		respondNotFound(writer)
+		return
 	}
 
 	writer.WriteHeader(http.StatusNoContent)
@@ -2553,4 +2729,356 @@ func (app *application) GetChatMembers(writer http.ResponseWriter, request *http
 	}
 
 	respondJsonBytes(writer, http.StatusOK, []byte(result))
+}
+
+type AddMembersDto struct {
+	AccountIds []uuid.UUID `json:"accountIds" validate:"required,min=1,dive,required"`
+}
+
+type AddMembersResultDto struct {
+	MemberIds []uuid.UUID `json:"memberIds"`
+}
+
+// @Tags Member
+// @Summary Add members to a group chat
+// @Param chat-id path string true "Chat ID"
+// @Param body body AddMembersDto true "Accounts to add"
+// @Success 201 {object} AddMembersResultDto "Members added"
+// @Router /member/chat/{chat-id} [post]
+func (app *application) PostChatMembers(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	chatId := chi.URLParam(request, "chat-id")
+
+	var body AddMembersDto
+	if err := app.ParseAndValidateRequestBody(request, &body); err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	for _, accountId := range body.AccountIds {
+		if accountId.String() == userAccountId {
+			respondBadRequestMessage(writer, "cannot add yourself")
+			return
+		}
+	}
+
+	transa, ok := app.BeginTransa(writer, request)
+	if !ok {
+		return
+	}
+	defer transa.Rollback(request.Context())
+
+	const sqlCheckAdmin = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM cu.chat
+			INNER JOIN cu.member
+				ON member.chat_id = chat.id
+				AND member.account_id = $2::UUID
+				AND member.is_group_admin
+				AND member.valid_to IS NULL
+			WHERE
+				chat.id = $1::UUID
+				AND chat.kind = 'group'::cu.chat_kind
+				AND chat.valid_to IS NULL
+		)
+	`
+
+	var isAdmin bool
+	if err := transa.QueryRow(request.Context(), sqlCheckAdmin, chatId, userAccountId).Scan(&isAdmin); err != nil {
+		respondQueryFailed(writer, err, sqlCheckAdmin)
+		return
+	}
+
+	if !isAdmin {
+		respondNotFoundWhat(writer, "You cannot update this chat.")
+		return
+	}
+
+	const sqlCheckAccounts = `
+		SELECT
+			COUNT(*) = CARDINALITY($1::UUID[]),
+			COUNT(*) FILTER (
+				WHERE EXISTS (
+					SELECT 1
+					FROM cu.member
+					WHERE
+						member.chat_id = $2::UUID
+						AND member.account_id = account.id
+						AND member.valid_to IS NULL
+				)
+			)
+		FROM cu.account
+		WHERE
+			account.id = ANY($1::UUID[])
+			AND account.valid_to IS NULL
+	`
+
+	var (
+		accountsExist   bool
+		alreadyMember   int
+	)
+
+	if err := transa.
+		QueryRow(request.Context(), sqlCheckAccounts, body.AccountIds, chatId).
+		Scan(&accountsExist, &alreadyMember); err != nil {
+
+		respondQueryFailed(writer, err, sqlCheckAccounts)
+		return
+	}
+
+	if !accountsExist {
+		respondNotFound(writer)
+		return
+	}
+
+	if alreadyMember > 0 {
+		respondConflict(writer, "one or more accounts are already members")
+		return
+	}
+
+	const sqlInsertMembers = `
+		INSERT INTO cu.member (
+			account_id,
+			chat_id,
+			is_group_admin,
+			is_group_owner
+		)
+		SELECT
+			account_id,
+			$1::UUID,
+			FALSE,
+			FALSE
+		FROM UNNEST($2::UUID[]) AS account_id
+		RETURNING id
+	`
+
+	rows, err := transa.Query(request.Context(), sqlInsertMembers, chatId, body.AccountIds)
+	if err != nil {
+		respondQueryFailed(writer, err, sqlInsertMembers)
+		return
+	}
+	defer rows.Close()
+
+	memberIds := make([]uuid.UUID, 0, len(body.AccountIds))
+	for rows.Next() {
+		var memberId uuid.UUID
+		if err := rows.Scan(&memberId); err != nil {
+			respondQueryFailed(writer, err, sqlInsertMembers)
+			return
+		}
+		memberIds = append(memberIds, memberId)
+	}
+
+	if err := rows.Err(); err != nil {
+		respondQueryFailed(writer, err, sqlInsertMembers)
+		return
+	}
+
+	if !app.CommitTransa(writer, request, transa) {
+		return
+	}
+
+	respondJson(writer, http.StatusCreated, AddMembersResultDto{MemberIds: memberIds})
+}
+
+type UpdateMemberDto struct {
+	DoAdmin *bool `json:"doAdmin,omitempty"`
+}
+
+// @Tags Member
+// @Summary Update a group member
+// @Param id path string true "Member ID"
+// @Param body body UpdateMemberDto true "Member options"
+// @Success 204
+// @Router /member/{id} [patch]
+func (app *application) PatchMember(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	memberId := chi.URLParam(request, "id")
+
+	var update UpdateMemberDto
+	if err := app.ParseAndValidateRequestBody(request, &update); err != nil {
+		respondBadRequestError(writer, err)
+		return
+	}
+
+	if update.DoAdmin == nil {
+		respondBadRequestMessage(writer, "nothing to update")
+		return
+	}
+
+	const sqlFindMember = `
+		SELECT
+			chat.kind,
+			COALESCE(target_member.is_group_admin, FALSE),
+			COALESCE(target_member.is_group_owner, FALSE),
+			COALESCE(caller_member.is_group_admin, FALSE),
+			COALESCE(caller_member.is_group_owner, FALSE)
+		FROM cu.member AS target_member
+		INNER JOIN cu.chat
+			ON chat.id = target_member.chat_id
+			AND chat.valid_to IS NULL
+		INNER JOIN cu.member AS caller_member
+			ON caller_member.chat_id = target_member.chat_id
+			AND caller_member.account_id = $2::UUID
+			AND caller_member.valid_to IS NULL
+		WHERE
+			target_member.id = $1::UUID
+			AND target_member.valid_to IS NULL
+	`
+
+	var (
+		chatKind      string
+		isTargetAdmin bool
+		isTargetOwner bool
+		isCallerAdmin bool
+		isCallerOwner bool
+	)
+
+	err := app.Database.
+		QueryRow(request.Context(), sqlFindMember, memberId, userAccountId).
+		Scan(&chatKind, &isTargetAdmin, &isTargetOwner, &isCallerAdmin, &isCallerOwner)
+	if err == pgx.ErrNoRows {
+		respondNotFound(writer)
+		return
+	} else if err != nil {
+		respondQueryFailed(writer, err, sqlFindMember)
+		return
+	}
+
+	if chatKind != "group" {
+		respondNotFoundWhat(writer, "member")
+		return
+	}
+
+	if !isCallerAdmin {
+		respondNotFoundWhat(writer, "You cannot update this member.")
+		return
+	}
+
+	if isTargetOwner {
+		respondConflict(writer, "cannot update the group owner")
+		return
+	}
+
+	if *update.DoAdmin == isTargetAdmin {
+		respondConflict(writer, "nothing to update")
+		return
+	}
+
+	if *update.DoAdmin && !isCallerOwner {
+		respondConflict(writer, "only the owner can promote members")
+		return
+	}
+
+	const sqlUpdateMember = `
+		UPDATE cu.member
+		SET is_group_admin = $2::BOOLEAN
+		WHERE
+			id = $1::UUID
+			AND valid_to IS NULL
+			AND NOT is_group_owner
+	`
+
+	if _, err := app.Database.Exec(request.Context(), sqlUpdateMember, memberId, *update.DoAdmin); err != nil {
+		respondQueryFailed(writer, err, sqlUpdateMember)
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+// @Tags Member
+// @Summary Remove a member from a group chat
+// @Param id path string true "Member ID"
+// @Success 204
+// @Router /member/{id} [delete]
+func (app *application) DeleteMember(writer http.ResponseWriter, request *http.Request) {
+	userAccountId, ok := getUserIdOrRespond(request.Context(), writer)
+	if !ok {
+		return
+	}
+	memberId := chi.URLParam(request, "id")
+
+	const sqlFindMember = `
+		SELECT
+			chat.kind,
+			target_member.account_id,
+			COALESCE(target_member.is_group_owner, FALSE),
+			COALESCE(caller_member.is_group_admin, FALSE)
+		FROM cu.member AS target_member
+		INNER JOIN cu.chat
+			ON chat.id = target_member.chat_id
+			AND chat.valid_to IS NULL
+		INNER JOIN cu.member AS caller_member
+			ON caller_member.chat_id = target_member.chat_id
+			AND caller_member.account_id = $2::UUID
+			AND caller_member.valid_to IS NULL
+		WHERE
+			target_member.id = $1::UUID
+			AND target_member.valid_to IS NULL
+	`
+
+	var (
+		chatKind        string
+		targetAccountId uuid.UUID
+		isTargetOwner   bool
+		isCallerAdmin   bool
+	)
+
+	err := app.Database.
+		QueryRow(request.Context(), sqlFindMember, memberId, userAccountId).
+		Scan(&chatKind, &targetAccountId, &isTargetOwner, &isCallerAdmin)
+	if err == pgx.ErrNoRows {
+		respondNotFound(writer)
+		return
+	} else if err != nil {
+		respondQueryFailed(writer, err, sqlFindMember)
+		return
+	}
+
+	if chatKind != "group" {
+		respondNotFoundWhat(writer, "member")
+		return
+	}
+
+	isSelf := targetAccountId.String() == userAccountId
+
+	if isTargetOwner {
+		respondConflict(writer, "the group owner cannot leave")
+		return
+	}
+
+	if !isSelf && !isCallerAdmin {
+		respondNotFoundWhat(writer, "You cannot remove this member.")
+		return
+	}
+
+	const sqlRemoveMember = `
+		UPDATE cu.member
+		SET valid_to = NOW()
+		WHERE
+			id = $1::UUID
+			AND valid_to IS NULL
+			AND NOT is_group_owner
+	`
+
+	result, err := app.Database.Exec(request.Context(), sqlRemoveMember, memberId)
+	if err != nil {
+		respondQueryFailed(writer, err, sqlRemoveMember)
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		respondNotFound(writer)
+		return
+	}
+
+	writer.WriteHeader(http.StatusNoContent)
 }
