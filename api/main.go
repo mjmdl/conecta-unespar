@@ -2064,6 +2064,7 @@ func (app *application) GetChats(writer http.ResponseWriter, request *http.Reque
 						WHERE
 							attach.kind = 'chat_picture'
 							AND attach.chat_id = chat.id
+							AND attach.deleted_at IS NULL
 						ORDER BY attach.created_at
 						LIMIT 1
 					) AS chat_picture ON TRUE
