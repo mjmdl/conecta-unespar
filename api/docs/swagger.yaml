@@ -1,4 +1,21 @@
 definitions:
+  main.AddMembersDto:
+    properties:
+      accountIds:
+        items:
+          type: string
+        minItems: 1
+        type: array
+    required:
+    - accountIds
+    type: object
+  main.AddMembersResultDto:
+    properties:
+      memberIds:
+        items:
+          type: string
+        type: array
+    type: object
   main.CampusPageDto:
     properties:
       campus:
@@ -27,6 +44,8 @@ definitions:
             directInfo:
               description: Present only for direct chats.
               properties:
+                description:
+                  type: string
                 himBlockedYou:
                   type: boolean
                 id:
@@ -110,22 +129,6 @@ definitions:
     properties:
       chatId:
         type: string
-    type: object
-  main.AddMembersDto:
-    properties:
-      accountIds:
-        items:
-          type: string
-        type: array
-    required:
-    - accountIds
-    type: object
-  main.AddMembersResultDto:
-    properties:
-      memberIds:
-        items:
-          type: string
-        type: array
     type: object
   main.CreatePostResultDto:
     properties:
@@ -274,11 +277,6 @@ definitions:
       name:
         type: string
     type: object
-  main.UpdateMemberDto:
-    properties:
-      doAdmin:
-        type: boolean
-    type: object
   main.UpdateDirectChatDto:
     properties:
       doBlock:
@@ -289,10 +287,18 @@ definitions:
         type: boolean
       doPin:
         type: boolean
+      message:
+        description: Available only for new chats!
+        type: string
       otherAccountId:
         type: string
     required:
     - otherAccountId
+    type: object
+  main.UpdateMemberDto:
+    properties:
+      doAdmin:
+        type: boolean
     type: object
   main.UsersPageDto:
     properties:
@@ -587,6 +593,39 @@ paths:
       summary: See current user
       tags:
       - User
+  /member/{id}:
+    delete:
+      parameters:
+      - description: Member ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      summary: Remove a member from a group chat
+      tags:
+      - Member
+    patch:
+      parameters:
+      - description: Member ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Member options
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.UpdateMemberDto'
+      responses:
+        "204":
+          description: No Content
+      summary: Update a group member
+      tags:
+      - Member
   /member/chat/{chat-id}:
     get:
       parameters:
@@ -636,39 +675,6 @@ paths:
           schema:
             $ref: '#/definitions/main.AddMembersResultDto'
       summary: Add members to a group chat
-      tags:
-      - Member
-  /member/{id}:
-    delete:
-      parameters:
-      - description: Member ID
-        in: path
-        name: id
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-      summary: Remove a member from a group chat
-      tags:
-      - Member
-    patch:
-      parameters:
-      - description: Member ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Member options
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/main.UpdateMemberDto'
-      responses:
-        "204":
-          description: No Content
-      summary: Update a group member
       tags:
       - Member
   /post:

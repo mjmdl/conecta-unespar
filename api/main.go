@@ -1275,6 +1275,8 @@ type UpdateDirectChatDto struct {
 	DoFriend       *bool     `json:"doFriend,omitempty"`
 	DoMute         *bool     `json:"doMute,omitempty"`
 	DoBlock        *bool     `json:"doBlock,omitempty"`
+	// Available only for new chats!
+	Message        *string   `json:"message,omitempty"`
 }
 
 type CreateChatResultDto struct {
@@ -1346,6 +1348,11 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 		QueryRow(request.Context(), sqlFindChat, userAccountId, chat.OtherAccountId).
 		Scan(&chatId, &isUsersPin, &isUsersFriend, &isHisFriend, &isUsersMute, &isUsersBlock, &isHisBlock)
 	if err == nil {
+		if chat.Message != nil {
+			respondBadRequestMessage(writer, "Message is available only for new direct chats!")
+			return
+		}
+		
 		if isHisBlock {
 			respondConflict(writer, "you are blocked")
 			return
@@ -1410,7 +1417,8 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 					$3::BOOLEAN AS is_user_pin,
 					$4::BOOLEAN AS is_user_mute,
 					$5::BOOLEAN AS is_user_friend,
-					$6::BOOLEAN AS is_user_block
+					$6::BOOLEAN AS is_user_block,
+					NULLIF(TRIM($7), '')::TEXT AS message
 			),
 			chat AS MATERIALIZED (
 				INSERT INTO cu.chat (kind, name)
@@ -1448,18 +1456,28 @@ func (app *application) PutDirectChat(writer http.ResponseWriter, request *http.
 						chat,
 						params
 				)
-				RETURNING member.id
+				RETURNING
+					member.id,
+					member.account_id
+			),
+			post AS MATERIALIZED (
+				INSERT INTO cu.post (member_id, message)
+				SELECT
+					your_member.id,
+					params.message
+				FROM params
+				INNER JOIN members AS your_member
+					ON your_member.account_id = params.user_account_id
+				WHERE params.message IS NOT NULL
 			)
 			SELECT chat.id
-			FROM
-				chat,
-				members;
+			FROM chat;
 		`
 
 		var chatId uuid.UUID
 
 		if err := transa.
-			QueryRow(request.Context(), sqlCreateChat, userAccountId, chat.OtherAccountId, chat.DoPin, chat.DoFriend, chat.DoMute, chat.DoBlock).
+			QueryRow(request.Context(), sqlCreateChat, userAccountId, chat.OtherAccountId, chat.DoPin, chat.DoFriend, chat.DoMute, chat.DoBlock, chat.Message).
 			Scan(&chatId); err != nil {
 
 			respondQueryFailed(writer, err, sqlCreateChat)

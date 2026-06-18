@@ -265,26 +265,6 @@
             }
         },
         "/group-chat/{id}/picture": {
-            "delete": {
-                "tags": [
-                    "Chat"
-                ],
-                "summary": "Remove group chat picture",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Chat ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    }
-                }
-            },
             "put": {
                 "consumes": [
                     "multipart/form-data"
@@ -306,6 +286,26 @@
                         "description": "Group picture",
                         "name": "picture",
                         "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Remove group chat picture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID",
+                        "name": "id",
+                        "in": "path",
                         "required": true
                     }
                 ],
@@ -693,6 +693,32 @@
         }
     },
     "definitions": {
+        "main.AddMembersDto": {
+            "type": "object",
+            "required": [
+                "accountIds"
+            ],
+            "properties": {
+                "accountIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "main.AddMembersResultDto": {
+            "type": "object",
+            "properties": {
+                "memberIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "main.CampusPageDto": {
             "type": "object",
             "properties": {
@@ -736,6 +762,9 @@
                                 "description": "Present only for direct chats.",
                                 "type": "object",
                                 "properties": {
+                                    "description": {
+                                        "type": "string"
+                                    },
                                     "himBlockedYou": {
                                         "type": "boolean"
                                     },
@@ -862,31 +891,6 @@
             "properties": {
                 "chatId": {
                     "type": "string"
-                }
-            }
-        },
-        "main.AddMembersDto": {
-            "type": "object",
-            "required": [
-                "accountIds"
-            ],
-            "properties": {
-                "accountIds": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "main.AddMembersResultDto": {
-            "type": "object",
-            "properties": {
-                "memberIds": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 }
             }
         },
@@ -1115,14 +1119,6 @@
                 }
             }
         },
-        "main.UpdateMemberDto": {
-            "type": "object",
-            "properties": {
-                "doAdmin": {
-                    "type": "boolean"
-                }
-            }
-        },
         "main.UpdateDirectChatDto": {
             "type": "object",
             "required": [
@@ -1141,8 +1137,20 @@
                 "doPin": {
                     "type": "boolean"
                 },
+                "message": {
+                    "description": "Available only for new chats!",
+                    "type": "string"
+                },
                 "otherAccountId": {
                     "type": "string"
+                }
+            }
+        },
+        "main.UpdateMemberDto": {
+            "type": "object",
+            "properties": {
+                "doAdmin": {
+                    "type": "boolean"
                 }
             }
         },

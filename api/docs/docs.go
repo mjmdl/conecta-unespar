@@ -276,26 +276,6 @@ const docTemplate = `{
             }
         },
         "/group-chat/{id}/picture": {
-            "delete": {
-                "tags": [
-                    "Chat"
-                ],
-                "summary": "Remove group chat picture",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Chat ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    }
-                }
-            },
             "put": {
                 "consumes": [
                     "multipart/form-data"
@@ -317,6 +297,26 @@ const docTemplate = `{
                         "description": "Group picture",
                         "name": "picture",
                         "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "Chat"
+                ],
+                "summary": "Remove group chat picture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chat ID",
+                        "name": "id",
+                        "in": "path",
                         "required": true
                     }
                 ],
@@ -704,6 +704,32 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "main.AddMembersDto": {
+            "type": "object",
+            "required": [
+                "accountIds"
+            ],
+            "properties": {
+                "accountIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "main.AddMembersResultDto": {
+            "type": "object",
+            "properties": {
+                "memberIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "main.CampusPageDto": {
             "type": "object",
             "properties": {
@@ -747,6 +773,9 @@ const docTemplate = `{
                                 "description": "Present only for direct chats.",
                                 "type": "object",
                                 "properties": {
+                                    "description": {
+                                        "type": "string"
+                                    },
                                     "himBlockedYou": {
                                         "type": "boolean"
                                     },
@@ -873,31 +902,6 @@ const docTemplate = `{
             "properties": {
                 "chatId": {
                     "type": "string"
-                }
-            }
-        },
-        "main.AddMembersDto": {
-            "type": "object",
-            "required": [
-                "accountIds"
-            ],
-            "properties": {
-                "accountIds": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "main.AddMembersResultDto": {
-            "type": "object",
-            "properties": {
-                "memberIds": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 }
             }
         },
@@ -1126,14 +1130,6 @@ const docTemplate = `{
                 }
             }
         },
-        "main.UpdateMemberDto": {
-            "type": "object",
-            "properties": {
-                "doAdmin": {
-                    "type": "boolean"
-                }
-            }
-        },
         "main.UpdateDirectChatDto": {
             "type": "object",
             "required": [
@@ -1152,8 +1148,20 @@ const docTemplate = `{
                 "doPin": {
                     "type": "boolean"
                 },
+                "message": {
+                    "description": "Available only for new chats!",
+                    "type": "string"
+                },
                 "otherAccountId": {
                     "type": "string"
+                }
+            }
+        },
+        "main.UpdateMemberDto": {
+            "type": "object",
+            "properties": {
+                "doAdmin": {
+                    "type": "boolean"
                 }
             }
         },
